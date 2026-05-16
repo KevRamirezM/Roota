@@ -1,6 +1,9 @@
 """
-config — Local platform and model parameter settings.
+config — application settings loaded from environment + .env file.
 
-Loads and validates configuration via pydantic-settings.
-Environment overrides are read from the project-root .env file.
+Exposes a single `Settings` instance via `get_settings()`.
 """
+
+from app.config.settings import Settings, get_settings
+
+__all__ = ["Settings", "get_settings"]

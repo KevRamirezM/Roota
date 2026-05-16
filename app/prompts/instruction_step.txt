@@ -1,0 +1,9 @@
+Vas a guiar a la persona en un solo paso de la tarea "{goal}".
+
+Paso actual: {step_index} de {total_steps}.
+Acción que la persona debe hacer: {action}.
+Objetivo en pantalla: "{target}".
+
+Escribe UNA frase corta, cálida y clara en español que le indique qué tocar
+o dónde mirar. Evita tecnicismos. No ejecutes la acción tú: la persona la
+hará. Devuelve SOLO la frase, sin comillas ni explicaciones.

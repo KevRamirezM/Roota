@@ -1,51 +1,59 @@
 """
-Centralised application settings loaded via pydantic-settings.
+Centralised application settings.
 
-All values have sensible defaults and can be overridden through a .env
-file placed at the project root, or via real environment variables.
+Values come from environment variables and `.env` (gitignored). Defaults
+mirror `.env.example` so the app runs out of the box on a stock Ollama
+install with `qwen2.5:3b` pulled.
 """
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from __future__ import annotations
+
+from functools import lru_cache
+from typing import Literal
+
 from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+Language = Literal["es", "en"]
+LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
 class Settings(BaseSettings):
+    """All runtime configuration for Roota."""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=False,
         extra="ignore",
+        case_sensitive=False,
     )
 
-    # ── LLM ──────────────────────────────────────────────────────────────────
-    ollama_host: str = Field("http://localhost:11434", description="Ollama server base URL")
-    llm_model: str = Field("qwen2.5:3b", description="Ollama model tag to use")
-    llm_temperature: float = Field(0.3, ge=0.0, le=2.0)
-    llm_max_tokens: int = Field(512, ge=1)
+    OLLAMA_HOST: str = "http://localhost:11434"
+    LLM_MODEL: str = "qwen2.5:3b"
+    LLM_TEMPERATURE: float = Field(default=0.3, ge=0.0, le=2.0)
+    LLM_MAX_TOKENS: int = Field(default=512, ge=16, le=8192)
+    LLM_TIMEOUT_SECONDS: float = Field(default=30.0, ge=1.0, le=300.0)
 
-    # ── Voice / STT ───────────────────────────────────────────────────────────
-    whisper_model_size: str = Field(
-        "small",
-        description="faster-whisper model size: tiny | base | small | medium | large",
-    )
-    whisper_language: str = Field("es", description="BCP-47 language code for transcription")
-    stt_device: str = Field("cpu", description="Inference device: cpu | cuda")
+    WHISPER_MODEL_SIZE: str = "small"
+    WHISPER_LANGUAGE: Language = "es"
+    STT_DEVICE: str = "cpu"
 
-    # ── Voice / TTS ───────────────────────────────────────────────────────────
-    tts_rate: int = Field(150, description="Speech rate (words per minute)")
-    tts_volume: float = Field(1.0, ge=0.0, le=1.0)
+    TTS_RATE: int = Field(default=150, ge=80, le=400)
+    TTS_VOLUME: float = Field(default=1.0, ge=0.0, le=1.0)
 
-    # ── UI ────────────────────────────────────────────────────────────────────
-    ui_font_size: int = Field(22, description="Base font size in points for accessibility")
-    ui_language: str = Field("es", description="Display language: es | en")
+    UI_FONT_SIZE: int = Field(default=22, ge=14, le=72)
+    UI_LANGUAGE: Language = "es"
 
-    # ── Overlay ───────────────────────────────────────────────────────────────
-    overlay_opacity: float = Field(0.85, ge=0.1, le=1.0)
-    overlay_fps: int = Field(30, description="Target render rate for overlay animations")
+    OVERLAY_OPACITY: float = Field(default=0.85, ge=0.1, le=1.0)
+    OVERLAY_FPS: int = Field(default=30, ge=10, le=120)
 
-    # ── Logging ───────────────────────────────────────────────────────────────
-    log_level: str = Field("INFO", description="Loguru log level")
-    log_dir: str = Field("logs", description="Directory for rotating log files")
+    LOG_LEVEL: LogLevel = "INFO"
+    LOG_DIR: str = "logs"
+
+    SAFETY_STRICT: bool = True
 
 
-settings = Settings()
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return the cached Settings instance."""
+    return Settings()

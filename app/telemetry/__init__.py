@@ -1,6 +1,7 @@
 """
-telemetry — Localised debugging and error-capturing system.
-
-All telemetry is strictly on-device. No data is transmitted externally.
-Uses loguru for structured log output to rotating local log files.
+telemetry — structured local logging only. Nothing leaves the device.
 """
+
+from app.telemetry.logger import configure_logging, get_logger
+
+__all__ = ["configure_logging", "get_logger"]

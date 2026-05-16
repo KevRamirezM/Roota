@@ -1,0 +1,31 @@
+Tu tarea: clasifica la siguiente petición en UNA intención y un objetivo.
+
+Responde SOLO con JSON válido y nada más, con esta forma exacta:
+{{"intent": "<one_of>", "target": "<text>", "params": {{}}}}
+
+Intenciones permitidas:
+- open_folder        (abrir una carpeta concreta del Explorador)
+- move_file          (mover un archivo a otro lugar)
+- delete_file        (borrar un archivo)
+- open_browser       (abrir Chrome u otro navegador)
+- search_web         (buscar algo en internet)
+- open_url           (abrir una página concreta)
+- compose_email      (escribir un correo nuevo)
+- read_inbox         (revisar la bandeja de entrada)
+- reply_message      (responder un correo)
+- open_word_document (abrir un documento de Word)
+- print_document     (imprimir un documento)
+- unknown            (no se reconoce con seguridad)
+
+Ejemplos:
+Petición: "Abre la carpeta de Descargas"
+Respuesta: {{"intent": "open_folder", "target": "Descargas", "params": {{}}}}
+
+Petición: "Quiero escribir un correo para mi hija Elena"
+Respuesta: {{"intent": "compose_email", "target": "Elena", "params": {{}}}}
+
+Petición: "Búscame el pronóstico del clima"
+Respuesta: {{"intent": "search_web", "target": "pronóstico del clima", "params": {{}}}}
+
+Petición: "{utterance}"
+Respuesta:

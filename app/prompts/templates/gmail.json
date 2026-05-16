@@ -1,0 +1,35 @@
+{
+  "compose_email": {
+    "expected_window": "Gmail",
+    "confirmation_action_key": "confirm.compose_email",
+    "steps": [
+      {
+        "action": "click",
+        "target_query": "Redactar",
+        "instruction_key": "guidance.click_target"
+      }
+    ]
+  },
+  "read_inbox": {
+    "expected_window": "Gmail",
+    "confirmation_action_key": "confirm.read_inbox",
+    "steps": [
+      {
+        "action": "click",
+        "target_query": "Bandeja de entrada",
+        "instruction_key": "guidance.click_target"
+      }
+    ]
+  },
+  "reply_message": {
+    "expected_window": "Gmail",
+    "confirmation_action_key": "confirm.reply_message",
+    "steps": [
+      {
+        "action": "click",
+        "target_query": "Responder",
+        "instruction_key": "guidance.click_target"
+      }
+    ]
+  }
+}
