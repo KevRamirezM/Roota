@@ -93,6 +93,21 @@ pub fn is_roota_title(title: &str) -> bool {
     ROOTA_TITLE_MARKERS.iter().any(|m| lower.contains(m))
 }
 
+/// Windows shell surfaces (desktop wallpaper, taskbar) — not a user app the
+/// user opened for work. When one of these has foreground, prefer desktop
+/// perception over background HWNDs.
+pub fn is_shell_or_desktop_surface(w: &WindowMeta) -> bool {
+    let title = w.title.to_lowercase();
+    let class = w.class_name.to_lowercase();
+
+    title.contains("program manager")
+        || class == "progman"
+        || class.contains("progman")
+        || class == "workerw"
+        || class.contains("shell_traywnd")
+        || class.contains("shell_secondarytraywnd")
+}
+
 #[cfg(windows)]
 mod windows_impl {
     use std::cell::RefCell;

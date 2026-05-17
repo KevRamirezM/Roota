@@ -22,7 +22,9 @@ use crate::perception::vision::{
     default_vision_perceiver, VisionPerceiver, VisionRequest,
 };
 use crate::perception::window_enum::list_visible_windows;
-use crate::perception::window_score::{rank_windows, visible_count, RankedWindow};
+use crate::perception::window_score::{
+    rank_windows, resolve_primary, visible_count, PrimaryTarget, RankedWindow,
+};
 use crate::perception::Perceiver;
 use crate::settings::Settings;
 
@@ -55,6 +57,86 @@ impl HybridPerceiver {
         self.vision = vision;
         self
     }
+
+    fn capture_desktop_primary(
+        &self,
+        started_ms: u64,
+        ctx: &PerceptionContext,
+        mode: crate::perception::context::PerceptionMode,
+        ranked: &[RankedWindow],
+        visible_total: u32,
+    ) -> Result<ScreenFrame, PerceptionError> {
+        let desktop_cap = desktop::walk_desktop_chrome();
+        let primary_id = desktop_cap
+            .windows
+            .first()
+            .map(|w| w.id)
+            .unwrap_or(desktop::TASKBAR_WINDOW_ID);
+
+        let mut warnings = Vec::<PerceptionWarning>::new();
+        if visible_total > ranked.len() as u32 {
+            warnings.push(PerceptionWarning::WindowCapTruncated {
+                total_visible: visible_total,
+                scanned: ranked.len() as u32,
+            });
+        }
+        warnings.extend(desktop_cap.warnings);
+
+        let mut uia_capture = if mode.uia_enabled() {
+            self.uia.capture(ranked)?
+        } else {
+            UiaCapture::default()
+        };
+        warnings.append(&mut uia_capture.warnings);
+        ensure_window_snapshots(&mut uia_capture.windows, ranked);
+
+        let mut windows = desktop_cap.windows;
+        for w in uia_capture.windows {
+            if !windows.iter().any(|existing| existing.id == w.id) {
+                windows.push(w);
+            }
+        }
+
+        let mut elements = desktop_cap.elements;
+        elements.extend(uia_capture.elements);
+
+        let interactable_on_desktop = count_interactable_in_primary(&elements, primary_id);
+        let quality = if interactable_on_desktop >= ctx.min_uia_elements().max(1) {
+            PerceptionQuality::Full
+        } else {
+            PerceptionQuality::DegradedUiaOnly
+        };
+
+        if interactable_on_desktop == 0 {
+            warnings.push(PerceptionWarning::LowElementCount {
+                window_id: primary_id,
+                count: 0,
+            });
+        }
+
+        let frame = ScreenFrame {
+            captured_at_ms: started_ms,
+            cursor: ctx.cursor,
+            primary_window_id: primary_id,
+            windows,
+            elements,
+            quality,
+            warnings,
+        };
+
+        tracing::info!(
+            target: "roota.perception",
+            windows = frame.windows.len(),
+            elements = frame.elements.len(),
+            primary = %frame.primary_window_title(),
+            quality = quality.label(),
+            warnings = ?frame.warnings_summary(),
+            mode = mode.label(),
+            "captured ScreenFrame (desktop primary)"
+        );
+
+        Ok(frame)
+    }
 }
 
 impl Perceiver for HybridPerceiver {
@@ -71,36 +153,17 @@ impl Perceiver for HybridPerceiver {
         let ranked = rank_windows(&raw_windows, ctx);
 
         if ranked.is_empty() {
-            // Fall back to desktop chrome only — perhaps the user is on the
-            // desktop with no app windows.
-            let desktop_cap = desktop::walk_desktop_chrome();
-            let desktop_has_windows = !desktop_cap.windows.is_empty();
-            let primary_id = desktop_cap
-                .windows
-                .first()
-                .map(|w| w.id)
-                .unwrap_or_default();
-            let mut frame_warnings = desktop_cap.warnings;
-            if !desktop_has_windows {
-                frame_warnings.push(PerceptionWarning::SecureDesktop);
-            }
-            let frame = ScreenFrame {
-                captured_at_ms: started_ms,
-                cursor: ctx.cursor,
-                primary_window_id: primary_id,
-                windows: desktop_cap.windows,
-                elements: desktop_cap.elements,
-                quality: if desktop_has_windows {
-                    PerceptionQuality::Full
-                } else {
-                    PerceptionQuality::DegradedUiaOnly
-                },
-                warnings: frame_warnings,
-            };
-            return Ok(frame);
+            return Ok(build_desktop_only_frame(started_ms, ctx));
         }
 
-        let primary_id = ranked[0].meta.id;
+        let primary_target = resolve_primary(&ranked, &raw_windows);
+        if primary_target == PrimaryTarget::Desktop {
+            return self.capture_desktop_primary(started_ms, ctx, mode, &ranked, visible_total);
+        }
+
+        let PrimaryTarget::UserApp(primary_id) = primary_target else {
+            return Ok(build_desktop_only_frame(started_ms, ctx));
+        };
 
         let mut warnings = Vec::<PerceptionWarning>::new();
         if visible_total > ranked.len() as u32 {
@@ -216,6 +279,33 @@ impl Perceiver for HybridPerceiver {
         );
 
         Ok(frame)
+    }
+}
+
+fn build_desktop_only_frame(started_ms: u64, ctx: &PerceptionContext) -> ScreenFrame {
+    let desktop_cap = desktop::walk_desktop_chrome();
+    let desktop_has_windows = !desktop_cap.windows.is_empty();
+    let primary_id = desktop_cap
+        .windows
+        .first()
+        .map(|w| w.id)
+        .unwrap_or(desktop::TASKBAR_WINDOW_ID);
+    let mut frame_warnings = desktop_cap.warnings;
+    if !desktop_has_windows {
+        frame_warnings.push(PerceptionWarning::SecureDesktop);
+    }
+    ScreenFrame {
+        captured_at_ms: started_ms,
+        cursor: ctx.cursor,
+        primary_window_id: primary_id,
+        windows: desktop_cap.windows,
+        elements: desktop_cap.elements,
+        quality: if desktop_has_windows {
+            PerceptionQuality::Full
+        } else {
+            PerceptionQuality::DegradedUiaOnly
+        },
+        warnings: frame_warnings,
     }
 }
 
