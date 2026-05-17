@@ -5,6 +5,8 @@ pub const INTENT_CLASSIFIER: &str = include_str!("../prompts/intent_classifier.t
 pub const INSTRUCTION_STEP: &str = include_str!("../prompts/instruction_step.txt");
 pub const TASK_PLANNER: &str = include_str!("../prompts/task_planner.txt");
 pub const TASK_BRIEF: &str = include_str!("../prompts/task_brief.txt");
+pub const WINDOWS_DESKTOP_GUIDE: &str = include_str!("../prompts/windows_desktop_guide.txt");
+pub const WINDOWS_DESKTOP_HINTS: &str = include_str!("../prompts/windows_desktop_hints.txt");
 
 pub fn render_intent_classifier(utterance: &str, allowed_intents: &[String]) -> String {
     let mut lines: Vec<String> = allowed_intents
@@ -24,6 +26,7 @@ pub fn render_intent_classifier(utterance: &str, allowed_intents: &[String]) -> 
 
 pub fn render_task_brief(utterance: &str, goal_target: &str) -> String {
     TASK_BRIEF
+        .replace("{windows_hints}", WINDOWS_DESKTOP_HINTS)
         .replace("{utterance}", utterance)
         .replace("{goal_target}", goal_target)
 }
@@ -38,6 +41,7 @@ pub struct TaskPlannerContext<'a> {
 
 pub fn render_task_planner(ctx: TaskPlannerContext<'_>) -> String {
     TASK_PLANNER
+        .replace("{windows_guide}", WINDOWS_DESKTOP_GUIDE)
         .replace("{utterance}", ctx.utterance)
         .replace("{goal_target}", ctx.goal_target)
         .replace("{task_brief_block}", ctx.task_brief_block)
@@ -90,6 +94,27 @@ pub fn render_instruction_step(ctx: InstructionPromptContext<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_planner_includes_windows_guide() {
+        let out = render_task_planner(TaskPlannerContext {
+            utterance: "abre wifi",
+            goal_target: "Wi‑Fi",
+            task_brief_block: "test",
+            window_list: "Chrome",
+            visible_elements: "Configuración",
+        });
+        assert!(!out.contains("{windows_guide}"));
+        assert!(out.contains("Win+E"));
+        assert!(out.len() > WINDOWS_DESKTOP_GUIDE.len() / 2);
+    }
+
+    #[test]
+    fn task_brief_includes_windows_hints() {
+        let out = render_task_brief("abre descargas", "Descargas");
+        assert!(out.contains("Win+E"));
+        assert!(!out.contains("{windows_hints}"));
+    }
 
     #[test]
     fn render_replaces_all_placeholders() {

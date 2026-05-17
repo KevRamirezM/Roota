@@ -28,7 +28,8 @@ Reglas para tu frase (obligatorio):
 2. Di la gestura de {click_hint} sobre «{target}».
 3. Indica que mire {overlay_cue} — ahí está el resaltado en pantalla.
 4. Si hay fila → OBJETIVO, usa exactamente ese nombre; no inventes otros botones.
-5. Si el objetivo NO está en la lista, pídele abrir la ventana correcta sin inventar ubicaciones.
+5. Si el objetivo NO está en la lista, pídele abrir la ventana correcta (Inicio, barra de tareas o Alt+Tab) sin inventar ubicaciones.
 6. No uses tecnicismos, coordenadas ni IDs. No ejecutes la acción por ella.
+7. Para localizar ventanas puedes decir "busca la ventana de…" o "en la barra de abajo, el icono de…".
 
 Devuelve SOLO la frase, sin comillas ni texto extra.

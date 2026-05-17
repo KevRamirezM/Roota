@@ -1,0 +1,83 @@
+# Guía de escritorio Windows para planificar tareas (Roota — solo guía, sin automatizar)
+
+## Principios
+- La persona hace TODOS los clics y teclas. Tú solo propones pasos con texto visible en pantalla.
+- Un paso = un gesto (clic, doble clic, clic derecho, escribir, o localizar ventana).
+- Prioriza rutas con pocos pasos y etiquetas que existan en la lista de controles visibles.
+- Nombres en español de Windows (Configuración, Explorador de archivos, Descargas, Papelera, etc.).
+
+## Anatomía del escritorio
+- Barra de tareas (abajo): iconos de apps abiertas, reloj, volumen, red, batería.
+- Botón Inicio (icono Windows): abre menú Inicio con apps ancladas y búsqueda.
+- Escritorio: iconos de carpetas/archivos; doble clic abre.
+- Ventana activa: barra de título arriba; botones minimizar / maximizar / cerrar a la derecha.
+- Menús: Archivo, Editar, Ver… o botón ⋮ (tres puntos) en apps modernas.
+
+## Gestos que debes planificar
+| action | Cuándo usarlo |
+|--------|----------------|
+| locate | Abrir o traer al frente una app/ventana que no está activa |
+| click | Botones, pestañas, elementos de lista, casillas |
+| double_click | Abrir carpeta o archivo en Explorador de archivos |
+| right_click | Menú contextual (Cortar, Copiar, Eliminar, Propiedades) |
+| type | Escribir en cuadro de búsqueda, barra de dirección, campo de texto |
+
+## Explorador de archivos
+- Abrir: icono carpeta en barra de tareas, o Win+E (puedes mencionarlo en instrucciones, no lo ejecutes).
+- Panel izquierdo: Descargas, Documentos, Imágenes, Este equipo, Escritorio.
+- Doble clic en carpeta = entrar. Doble clic en archivo = abrir con app predeterminada.
+- Barra superior: botón "Nuevo" para carpeta; flecha Atrás para subir.
+- Buscar archivos: cuadro "Buscar" arriba a la derecha (target suele decir "Buscar" o similar).
+
+## Inicio y Configuración
+- Configuración: Inicio → engranaje "Configuración", o buscar "Configuración" en Inicio.
+- Dentro: Sistema, Bluetooth y dispositivos, Red e Internet, Personalización, Cuentas, etc.
+- Wi‑Fi: Configuración → Red e Internet → Wi‑Fi.
+- Bluetooth: Configuración → Bluetooth y dispositivos.
+- Sonido/volumen: icono altavoz en barra de tareas (clic) o Configuración → Sistema → Sonido.
+
+## Navegador (Chrome / Edge)
+- Nueva pestaña: botón "+" o "Nueva pestaña".
+- Buscar en web: clic en barra de dirección, type, Enter (el usuario pulsa Enter; tú solo guías hasta escribir).
+- Favoritos: icono estrella o menú ⋮.
+
+## Correo (Gmail / Outlook web)
+- Redactar: botón "Redactar" / "Compose".
+- Bandeja: "Recibidos" / "Inbox".
+
+## Apps frecuentes y cómo localizarlas
+| Petición típica | Ventana / texto a localizar |
+|-----------------|------------------------------|
+| Archivos, carpetas | Explorador de archivos |
+| Internet | Google Chrome, Microsoft Edge |
+| Ajustes del PC | Configuración |
+| Fotos | Fotos |
+| Notas rápidas | Bloc de notas |
+| Terminal en Cursor/VS Code | menú Terminal, Ver, o "Nueva terminal" |
+
+## Atajos útiles (solo para sugerir al usuario, NUNCA ejecutarlos tú)
+- Win: abrir/cerrar Inicio
+- Win+E: Explorador de archivos
+- Alt+Tab: cambiar entre ventanas
+- Ctrl+C / Ctrl+V: copiar y pegar (después de clic derecho o menú Editar)
+- Win+I: Configuración (Windows 10/11)
+- Win+A: panel de acción rápida (Wi‑Fi, Bluetooth)
+
+## Patrones de planificación (elige el que encaje)
+1. App ya abierta y visible → clic/doble clic directo en el control.
+2. App en segundo plano → locate ventana por título → luego clic en control.
+3. App no abierta → locate Inicio o icono en barra → abrir app → pasos internos.
+4. Ajuste del sistema → Inicio → Configuración → sección, o icono en barra de tareas.
+5. Archivo en Explorador → locate Explorador → panel izquierdo o doble clic carpeta.
+6. Buscar algo sin saber dónde está → locate ventana → type en "Buscar" con el texto.
+
+## Textos comunes en UI (usa como target si aparecen en controles visibles)
+Inicio, Configuración, Buscar, Aceptar, Cancelar, Sí, No, Cerrar, Guardar, Abrir,
+Descargas, Documentos, Escritorio, Papelera, Este equipo, Redactar, Nueva pestaña,
+Conectar, Desconectar, Activar, Desactivar, Más opciones, Ver más, Siguiente, Atrás.
+
+## Qué evitar en planes
+- No pidas PowerShell, CMD ni regedit salvo que el usuario lo pida explícitamente.
+- No planifiques borrar/formatear sin risk_flags; prefiere localizar y confirmar visualmente.
+- No inventes nombres de botones que no estén en la lista de controles visibles.
+- No combines dos gestos en un paso (mal: "abre y escribe"; bien: paso locate, paso click, paso type).

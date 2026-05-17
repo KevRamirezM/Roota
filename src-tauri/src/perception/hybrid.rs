@@ -17,6 +17,7 @@ use crate::perception::frame::{
 };
 use crate::perception::fusion::FusionEngine;
 use crate::perception::uia::{UiaCapture, UiaPerceiver};
+use crate::perception::vision::coords::inflate_rect;
 use crate::perception::vision::{
     default_vision_perceiver, VisionPerceiver, VisionRequest,
 };
@@ -145,11 +146,18 @@ impl Perceiver for HybridPerceiver {
                 || matches!(mode, crate::perception::context::PerceptionMode::VisionOnly));
 
         if should_run_vision {
+            let capture_rect = if primary_rect.width > 0 && primary_rect.height > 0 {
+                inflate_rect(primary_rect, ctx.settings.capture_margin_px, None)
+            } else {
+                primary_rect
+            };
             let req = VisionRequest {
                 primary_window_id: primary_id,
-                primary_window_rect: primary_rect,
+                primary_window_rect: capture_rect,
                 language: ctx.settings.ocr_language.clone(),
-                scale: ctx.settings.capture_scale,
+                scale: ctx.settings.ocr_capture_scale,
+                max_edge: ctx.settings.ocr_max_edge,
+                preprocess_ocr: ctx.settings.ocr_preprocess,
             };
             match self.vision.recognize(&req) {
                 Ok(mut cap) => {

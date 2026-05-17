@@ -34,16 +34,27 @@ pub struct PerceptionSettings {
     pub vision_vlm_enabled: bool,
     /// Ollama vision model tag (e.g. moondream:1.8b).
     pub vision_model: String,
-    /// Per-vision-request timeout in seconds (Moondream cold start can exceed 8s).
+    /// Per-VLM-request timeout in seconds (Moondream cold start can exceed 8s).
     pub vision_timeout_secs: f32,
+    /// Windows.Media.Ocr call timeout in seconds.
+    pub ocr_timeout_secs: f32,
     /// Max tokens for vision JSON responses.
     pub vision_max_tokens: u32,
     /// Max long edge of captured bitmap before sending to the VLM.
     pub vision_max_edge: u32,
+    /// Max long edge for Windows OCR (higher = sharper click boxes).
+    pub ocr_max_edge: u32,
     /// When true, write debug PNG captures to temp (dev only).
     pub debug_capture: bool,
     pub ocr_language: String,
+    /// Downscale for VLM captures (Moondream).
     pub capture_scale: f32,
+    /// Downscale for OCR captures (1.0 = full resolution up to `ocr_max_edge`).
+    pub ocr_capture_scale: f32,
+    /// Pixels to expand the capture rect beyond the window (menus near edges).
+    pub capture_margin_px: i32,
+    /// Contrast-stretch captured bitmap before OCR.
+    pub ocr_preprocess: bool,
     /// Below this many *interactable* elements in the primary window client
     /// rect, hybrid will run vision (if enabled & engine available).
     pub min_uia_elements: usize,
@@ -61,11 +72,16 @@ impl Default for PerceptionSettings {
             vision_vlm_enabled: false,
             vision_model: "moondream:1.8b".into(),
             vision_timeout_secs: 45.0,
+            ocr_timeout_secs: 12.0,
             vision_max_tokens: 256,
             vision_max_edge: 512,
+            ocr_max_edge: 1024,
             debug_capture: false,
             ocr_language: "es".into(),
             capture_scale: 0.75,
+            ocr_capture_scale: 1.0,
+            capture_margin_px: 32,
+            ocr_preprocess: true,
             min_uia_elements: 3,
             prompt_max_elements: 40,
             prompt_max_windows: 3,
@@ -86,14 +102,19 @@ impl PerceptionSettings {
                 "ROOTA_VISION_TIMEOUT_SECS",
                 default.vision_timeout_secs,
             ),
+            ocr_timeout_secs: env_parse("ROOTA_OCR_TIMEOUT_SECS", default.ocr_timeout_secs),
             vision_max_tokens: env_parse(
                 "ROOTA_VISION_MAX_TOKENS",
                 default.vision_max_tokens,
             ),
             vision_max_edge: env_parse("ROOTA_VISION_MAX_EDGE", default.vision_max_edge),
+            ocr_max_edge: env_parse("ROOTA_OCR_MAX_EDGE", default.ocr_max_edge),
             debug_capture: env_parse_bool("ROOTA_DEBUG_CAPTURE", default.debug_capture),
             ocr_language: env_or("ROOTA_OCR_LANGUAGE", &default.ocr_language),
             capture_scale: env_parse("ROOTA_CAPTURE_SCALE", default.capture_scale),
+            ocr_capture_scale: env_parse("ROOTA_OCR_CAPTURE_SCALE", default.ocr_capture_scale),
+            capture_margin_px: env_parse("ROOTA_CAPTURE_MARGIN_PX", default.capture_margin_px),
+            ocr_preprocess: env_parse_bool("ROOTA_OCR_PREPROCESS", default.ocr_preprocess),
             min_uia_elements: env_parse("ROOTA_MIN_UIA_ELEMENTS", default.min_uia_elements),
             prompt_max_elements: env_parse(
                 "ROOTA_PROMPT_MAX_ELEMENTS",
@@ -193,8 +214,12 @@ mod tests {
         assert!((s.vision_timeout_secs - 45.0).abs() < f32::EPSILON);
         assert_eq!(s.vision_max_tokens, 256);
         assert_eq!(s.vision_max_edge, 512);
+        assert_eq!(s.ocr_max_edge, 1024);
         assert_eq!(s.ocr_language, "es");
         assert!((s.capture_scale - 0.75).abs() < f32::EPSILON);
+        assert!((s.ocr_capture_scale - 1.0).abs() < f32::EPSILON);
+        assert_eq!(s.capture_margin_px, 32);
+        assert!(s.ocr_preprocess);
         assert_eq!(s.min_uia_elements, 3);
         assert_eq!(s.prompt_max_elements, 40);
         assert_eq!(s.prompt_max_windows, 3);

@@ -164,7 +164,9 @@ mod tests {
             primary_window_id: WindowId(1),
             primary_window_rect: Rect::new(0, 0, 800, 600),
             language: "es".into(),
-            scale: 0.75,
+            scale: 1.0,
+            max_edge: 1024,
+            preprocess_ocr: true,
         })
         .unwrap();
         assert_eq!(cap.elements.len(), 2);
@@ -191,7 +193,9 @@ mod tests {
                 primary_window_id: WindowId(1),
                 primary_window_rect: Rect::new(0, 0, 800, 600),
                 language: "es".into(),
-                scale: 0.75,
+                scale: 1.0,
+                max_edge: 1024,
+                preprocess_ocr: true,
             })
             .unwrap();
         assert_eq!(cap.elements.len(), 2);

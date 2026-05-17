@@ -8,9 +8,10 @@ use serde::Deserialize;
 use crate::llm::ollama::OllamaClient;
 use crate::perception::error::PerceptionError;
 use crate::perception::frame::{
-    ElementSource, PerceptionWarning, Rect, ScreenElement, WindowId,
+    ElementSource, PerceptionWarning, ScreenElement, WindowId,
 };
-use crate::perception::vision::capture::{capture_window_bitmap, CapturedFrame};
+use crate::perception::vision::capture::{capture_window_bitmap, CaptureOptions, CapturedFrame};
+use crate::perception::vision::coords::map_image_rect_to_screen;
 use crate::perception::vision::{VisionCapture, VisionPerceiver, VisionRequest};
 use crate::settings::Settings;
 
@@ -20,6 +21,7 @@ const VLM_CONFIDENCE: f32 = 0.65;
 pub struct MoondreamVisionPerceiver {
     client: OllamaClient,
     max_edge: u32,
+    capture_scale: f32,
     debug_capture: bool,
     available: bool,
 }
@@ -44,6 +46,7 @@ impl MoondreamVisionPerceiver {
         let slf = Self {
             client,
             max_edge: settings.perception.vision_max_edge,
+            capture_scale: settings.perception.capture_scale,
             debug_capture: settings.perception.debug_capture,
             available,
         };
@@ -91,8 +94,11 @@ impl VisionPerceiver for MoondreamVisionPerceiver {
 
         let bitmap = capture_window_bitmap(
             req.primary_window_rect,
-            req.scale,
-            self.max_edge,
+            &CaptureOptions {
+                scale: self.capture_scale,
+                max_edge: self.max_edge,
+                preprocess_ocr: false,
+            },
         )
         .map_err(|e| PerceptionError::Capture(e.to_string()))?;
 
@@ -194,10 +200,6 @@ pub fn parse_vision_elements(
         }
     };
 
-    let img_w = bitmap.width.max(1) as i32;
-    let img_h = bitmap.height.max(1) as i32;
-    let rect = bitmap.source_rect;
-
     parsed
         .elements
         .into_iter()
@@ -206,20 +208,24 @@ pub fn parse_vision_elements(
             if text.is_empty() {
                 return None;
             }
-            let x = el.x.unwrap_or(0).clamp(0, img_w);
-            let y = el.y.unwrap_or(0).clamp(0, img_h);
-            let w = el.w.unwrap_or(40).clamp(4, img_w - x);
-            let h = el.h.unwrap_or(24).clamp(4, img_h - y);
-
-            let screen_x = rect.x + (x * rect.width) / img_w;
-            let screen_y = rect.y + (y * rect.height) / img_h;
-            let screen_w = ((w * rect.width) / img_w).max(4);
-            let screen_h = ((h * rect.height) / img_h).max(4);
+            let x = el.x.unwrap_or(0);
+            let y = el.y.unwrap_or(0);
+            let w = el.w.unwrap_or(40);
+            let h = el.h.unwrap_or(24);
+            let bounds = map_image_rect_to_screen(
+                x,
+                y,
+                w,
+                h,
+                bitmap.width,
+                bitmap.height,
+                bitmap.source_rect,
+            );
 
             Some(ScreenElement {
                 source: ElementSource::Vlm,
                 text,
-                bounds: Rect::new(screen_x, screen_y, screen_w, screen_h),
+                bounds,
                 window_id,
                 kind: el.kind.unwrap_or_else(|| "Unknown".into()),
                 confidence: VLM_CONFIDENCE,
@@ -232,6 +238,7 @@ pub fn parse_vision_elements(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::perception::frame::Rect;
 
     #[test]
     fn parse_vision_elements_maps_coords() {

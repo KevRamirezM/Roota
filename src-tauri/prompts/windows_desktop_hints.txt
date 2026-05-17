@@ -1,0 +1,1 @@
+Referencia rápida Windows: Inicio abre apps; Configuración vía engranaje; Explorador = carpetas (doble clic abre); barra de tareas cambia ventanas; locate si la app no está al frente; targets = texto exacto visible; atajos opcionales Win+E (archivos), Win+I (ajustes), Alt+Tab (cambiar ventana) — el usuario los pulsa, tú no.

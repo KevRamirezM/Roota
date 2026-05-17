@@ -42,8 +42,11 @@ impl DecisionEngine {
         let blueprint = &template.steps[session.step_index];
         let target_text = materialise_target(blueprint, intent);
         let element = find_element(frame, &target_text, blueprint, blueprint.action, intent);
-        let anchor = element.map(ScreenElement::center);
-        let anchor_bounds = element.map(|e| (e.bounds.x, e.bounds.y, e.bounds.width, e.bounds.height));
+        let anchor = element.map(ScreenElement::click_anchor);
+        let anchor_bounds = element.map(|e| {
+            let b = e.click_hit_bounds();
+            (b.x, b.y, b.width, b.height)
+        });
 
         let instruction = i18n::t(
             &blueprint.instruction_key,

@@ -81,6 +81,17 @@ pub fn heuristic_brief(utterance: &str, goal_target: &str) -> TaskBrief {
     {
         app_hints.push("configuración".into());
     }
+    if lower.contains("wifi") || lower.contains("wi-fi") || lower.contains("wi fi") {
+        app_hints.push("configuración".into());
+        object_hints.push("wi-fi".into());
+    }
+    if lower.contains("bluetooth") {
+        app_hints.push("configuración".into());
+        object_hints.push("bluetooth".into());
+    }
+    if lower.contains("volumen") || lower.contains("sonido") {
+        object_hints.push("volumen".into());
+    }
     if lower.contains("cursor") {
         app_hints.push("cursor".into());
     }

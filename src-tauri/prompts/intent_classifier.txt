@@ -6,8 +6,10 @@ Responde SOLO con JSON válido:
 Intenciones permitidas:
 {allowed_intents}
 
-Usa "windows_task" para CUALQUIER otra tarea de escritorio Windows (ajustes, volumen, fotos, Bluetooth, cerrar ventana, etc.).
+Usa "windows_task" para CUALQUIER otra tarea de escritorio Windows (ajustes, volumen, fotos, Bluetooth, Wi‑Fi, cerrar ventana, terminal en Cursor, etc.).
 Usa "unknown" solo si la petición está vacía o no es una tarea de PC.
+
+Pistas: "configuración/ajustes" → windows_task target Configuración; archivos/carpetas → open_folder si es abrir carpeta concreta; volumen/sonido → windows_task target volumen.
 
 Ejemplos:
 Petición: "Abre la carpeta de Descargas"

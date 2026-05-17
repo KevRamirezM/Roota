@@ -2,9 +2,11 @@
 
 use crate::perception::error::PerceptionError;
 use crate::perception::frame::{
-    ElementSource, PerceptionWarning, Rect, ScreenElement, WindowId,
+    ElementSource, PerceptionWarning, ScreenElement, WindowId,
 };
-use crate::perception::vision::capture::{capture_window_bitmap, CapturedFrame};
+use crate::perception::vision::capture::{capture_window_bitmap, CaptureOptions, CapturedFrame};
+use crate::perception::vision::coords::map_image_rect_to_screen;
+use crate::perception::vision::preprocess::merge_ocr_words_into_lines;
 use crate::perception::vision::{VisionCapture, VisionPerceiver, VisionRequest};
 use crate::settings::PerceptionSettings;
 
@@ -13,7 +15,7 @@ const OCR_CONFIDENCE: f32 = 0.88;
 #[derive(Debug)]
 pub struct WindowsOcrPerceiver {
     available: bool,
-    max_edge: u32,
+    ocr_timeout_secs: f32,
 }
 
 impl WindowsOcrPerceiver {
@@ -32,7 +34,7 @@ impl WindowsOcrPerceiver {
         }
         Self {
             available,
-            max_edge: settings.vision_max_edge,
+            ocr_timeout_secs: settings.ocr_timeout_secs,
         }
     }
 }
@@ -62,8 +64,11 @@ impl VisionPerceiver for WindowsOcrPerceiver {
 
         let bitmap = capture_window_bitmap(
             req.primary_window_rect,
-            req.scale,
-            self.max_edge,
+            &CaptureOptions {
+                scale: req.scale,
+                max_edge: req.max_edge,
+                preprocess_ocr: req.preprocess_ocr,
+            },
         )
         .map_err(|e| PerceptionError::Capture(e.to_string()))?;
 
@@ -75,12 +80,16 @@ impl VisionPerceiver for WindowsOcrPerceiver {
         }
 
         let started = std::time::Instant::now();
-        let elements = recognize_bitmap(&bitmap, req.primary_window_id, &req.language)
-            .map_err(|e| PerceptionError::Ocr(e))?;
+        let mut elements =
+            recognize_bitmap_timed(&bitmap, req.primary_window_id, &req.language, self.ocr_timeout_secs)
+                .map_err(PerceptionError::Ocr)?;
+        let raw_words = elements.len();
+        elements = merge_ocr_words_into_lines(elements);
 
         tracing::info!(
             target: "roota.perception.vision",
             ms = started.elapsed().as_millis(),
+            words = raw_words,
             lines = elements.len(),
             "windows OCR complete"
         );
@@ -102,24 +111,20 @@ pub fn map_ocr_word_to_element(
     bitmap: &CapturedFrame,
     window_id: WindowId,
 ) -> ScreenElement {
-    let img_w = bitmap.width.max(1) as i32;
-    let img_h = bitmap.height.max(1) as i32;
-    let rect = bitmap.source_rect;
-
-    let x = word_x.clamp(0, img_w);
-    let y = word_y.clamp(0, img_h);
-    let w = word_w.clamp(4, img_w - x);
-    let h = word_h.clamp(4, img_h - y);
-
-    let screen_x = rect.x + (x * rect.width) / img_w;
-    let screen_y = rect.y + (y * rect.height) / img_h;
-    let screen_w = ((w * rect.width) / img_w).max(4);
-    let screen_h = ((h * rect.height) / img_h).max(4);
+    let bounds = map_image_rect_to_screen(
+        word_x,
+        word_y,
+        word_w,
+        word_h,
+        bitmap.width,
+        bitmap.height,
+        bitmap.source_rect,
+    );
 
     ScreenElement {
         source: ElementSource::Ocr,
         text: text.trim().to_string(),
-        bounds: Rect::new(screen_x, screen_y, screen_w, screen_h),
+        bounds,
         window_id,
         kind: "text".into(),
         confidence: OCR_CONFIDENCE,
@@ -135,6 +140,42 @@ fn probe_ocr_engine() -> bool {
 #[cfg(not(windows))]
 fn probe_ocr_engine() -> bool {
     false
+}
+
+fn recognize_bitmap_timed(
+    bitmap: &CapturedFrame,
+    window_id: WindowId,
+    language: &str,
+    timeout_secs: f32,
+) -> Result<Vec<ScreenElement>, String> {
+    #[cfg(windows)]
+    {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let bitmap = bitmap.clone();
+        let language = language.to_string();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = recognize_bitmap(&bitmap, window_id, &language);
+            let _ = tx.send(result);
+        });
+        match rx.recv_timeout(Duration::from_secs_f32(timeout_secs.max(1.0))) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
+                "Windows OCR timed out after {:.0}s",
+                timeout_secs
+            )),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err("Windows OCR worker exited unexpectedly".into())
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = timeout_secs;
+        recognize_bitmap(bitmap, window_id, language)
+    }
 }
 
 #[cfg(windows)]
@@ -248,6 +289,7 @@ fn recognize_bitmap(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::perception::frame::Rect;
 
     #[test]
     fn map_ocr_word_scales_to_screen_rect() {

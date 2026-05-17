@@ -60,6 +60,10 @@ impl RecipeRegistry {
             Some(("chrome", "new_tab"))
         } else if u.contains("descargas") || u.contains("downloads") {
             Some(("explorer", "open_downloads"))
+        } else if u.contains("wifi") || u.contains("wi-fi") || u.contains("wi fi") {
+            Some(("settings", "wifi"))
+        } else if u.contains("bluetooth") {
+            Some(("settings", "bluetooth"))
         } else if u.contains("configuración") || u.contains("configuracion") || u.contains("settings")
         {
             Some(("settings", "open_settings"))

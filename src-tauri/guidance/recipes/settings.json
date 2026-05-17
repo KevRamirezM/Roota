@@ -2,5 +2,16 @@
   "open_settings": [
     { "action": "click", "target_query": "Inicio" },
     { "action": "click", "target_query": "Configuración" }
+  ],
+  "wifi": [
+    { "action": "click", "target_query": "Inicio" },
+    { "action": "click", "target_query": "Configuración" },
+    { "action": "click", "target_query": "Red e Internet" },
+    { "action": "click", "target_query": "Wi-Fi" }
+  ],
+  "bluetooth": [
+    { "action": "click", "target_query": "Inicio" },
+    { "action": "click", "target_query": "Configuración" },
+    { "action": "click", "target_query": "Bluetooth y dispositivos" }
   ]
 }

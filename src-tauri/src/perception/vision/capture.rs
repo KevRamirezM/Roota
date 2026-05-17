@@ -35,20 +35,40 @@ pub enum CaptureError {
     Platform(String),
 }
 
-/// Capture the region `rect` (physical screen coords), downscale so the long
-/// edge is at most `max_edge`, then apply an extra `scale` factor (0..1].
+/// Tunables for one bitmap capture.
+#[derive(Debug, Clone)]
+pub struct CaptureOptions {
+    /// Downscale factor applied after `max_edge` clamp (0.1..1.0).
+    pub scale: f32,
+    /// Longest edge of the output bitmap.
+    pub max_edge: u32,
+    /// Apply contrast stretch before OCR (slightly slower, sharper boxes).
+    pub preprocess_ocr: bool,
+}
+
+impl Default for CaptureOptions {
+    fn default() -> Self {
+        Self {
+            scale: 1.0,
+            max_edge: 1024,
+            preprocess_ocr: true,
+        }
+    }
+}
+
+/// Capture the region `rect` (physical screen coords), optionally preprocess,
+/// then downscale so the long edge is at most `max_edge` × `scale`.
 pub fn capture_window_bitmap(
     rect: Rect,
-    scale: f32,
-    max_edge: u32,
+    opts: &CaptureOptions,
 ) -> Result<CapturedFrame, CaptureError> {
     #[cfg(windows)]
     {
-        windows_impl::capture(rect, scale, max_edge)
+        windows_impl::capture(rect, opts)
     }
     #[cfg(not(windows))]
     {
-        let _ = (scale, max_edge);
+        let _ = opts;
         tracing::debug!(
             target: "roota.perception.vision",
             rect = ?rect,
@@ -60,12 +80,15 @@ pub fn capture_window_bitmap(
 
 #[cfg(windows)]
 mod windows_impl {
-    use super::{CaptureError, CapturedFrame};
+    use super::{CaptureError, CapturedFrame, CaptureOptions};
     use crate::perception::frame::Rect;
+    use crate::perception::vision::preprocess::enhance_for_ocr;
     use image::imageops::FilterType;
     use image::RgbaImage;
 
-    pub fn capture(rect: Rect, scale: f32, max_edge: u32) -> Result<CapturedFrame, CaptureError> {
+    pub fn capture(rect: Rect, opts: &CaptureOptions) -> Result<CapturedFrame, CaptureError> {
+        let scale = opts.scale;
+        let max_edge = opts.max_edge;
         if rect.width <= 0 || rect.height <= 0 {
             return Ok(CapturedFrame::empty(rect));
         }
@@ -105,6 +128,9 @@ mod windows_impl {
 
         let cropped = crop_rgba(&full, rel_x, rel_y, crop_w, crop_h);
         let mut img = cropped;
+        if opts.preprocess_ocr {
+            img = enhance_for_ocr(&img);
+        }
         let max_edge = max_edge.max(64);
         let long_edge = img.width().max(img.height());
         let mut target_long = max_edge;
@@ -115,7 +141,7 @@ mod windows_impl {
             let ratio = target_long as f32 / long_edge as f32;
             let nw = ((img.width() as f32) * ratio).max(1.0) as u32;
             let nh = ((img.height() as f32) * ratio).max(1.0) as u32;
-            img = image::imageops::resize(&img, nw, nh, FilterType::Triangle);
+            img = image::imageops::resize(&img, nw, nh, FilterType::Lanczos3);
         }
 
         let width = img.width();
@@ -163,7 +189,7 @@ mod tests {
     #[test]
     fn non_windows_capture_returns_empty() {
         let r = Rect::new(0, 0, 800, 600);
-        let frame = capture_window_bitmap(r, 0.75, 768).unwrap();
+        let frame = capture_window_bitmap(r, &CaptureOptions::default()).unwrap();
         #[cfg(not(windows))]
         assert!(frame.is_empty());
         assert_eq!(frame.source_rect, r);
@@ -174,7 +200,7 @@ mod tests {
     #[ignore = "requires display; run manually"]
     fn windows_capture_non_empty() {
         let r = Rect::new(0, 0, 200, 200);
-        let frame = capture_window_bitmap(r, 0.75, 768).unwrap();
+        let frame = capture_window_bitmap(r, &CaptureOptions::default()).unwrap();
         assert!(!frame.is_empty());
         assert!(frame.width > 0 && frame.height > 0);
     }

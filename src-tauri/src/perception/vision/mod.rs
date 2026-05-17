@@ -6,9 +6,11 @@
 //! file change: implement `VisionPerceiver` and pass it to `HybridPerceiver`.
 
 pub mod capture;
+pub mod coords;
 pub mod layered;
 pub mod moondream;
 pub mod ocr_windows;
+pub mod preprocess;
 
 use crate::perception::error::PerceptionError;
 use crate::perception::frame::{
@@ -19,9 +21,15 @@ use crate::perception::frame::{
 #[derive(Debug, Clone)]
 pub struct VisionRequest {
     pub primary_window_id: WindowId,
+    /// Capture region in physical screen coords (often inflated by margin).
     pub primary_window_rect: Rect,
     pub language: String,
+    /// Downscale factor applied after `max_edge` clamp (OCR prefers 1.0).
     pub scale: f32,
+    /// Longest edge of the bitmap sent to the engine.
+    pub max_edge: u32,
+    /// Apply contrast stretch before OCR (ignored by VLM).
+    pub preprocess_ocr: bool,
 }
 
 #[derive(Debug, Default)]

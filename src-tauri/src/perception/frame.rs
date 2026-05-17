@@ -48,6 +48,13 @@ impl Rect {
         (self.x + self.width / 2, self.y + self.height / 2)
     }
 
+    /// Rounded geometric center (less bias than integer `/ 2`).
+    pub fn center_rounded(&self) -> (i32, i32) {
+        let cx = self.x + ((self.width as f64) * 0.5).round() as i32;
+        let cy = self.y + ((self.height as f64) * 0.5).round() as i32;
+        (cx, cy)
+    }
+
     pub fn area(&self) -> i64 {
         i64::from(self.width.max(0)) * i64::from(self.height.max(0))
     }
@@ -99,6 +106,45 @@ pub struct ScreenElement {
 impl ScreenElement {
     pub fn center(&self) -> (i32, i32) {
         self.bounds.center()
+    }
+
+    /// Best screen point for the user to click — rounded center with a slight
+    /// downward bias for OCR/text labels (glyphs sit above the box center).
+    pub fn click_anchor(&self) -> (i32, i32) {
+        let b = &self.bounds;
+        let cx = b.x + ((b.width as f64) * 0.5).round() as i32;
+        let y_frac = if self.is_text_like() { 0.58 } else { 0.5 };
+        let cy = b.y + ((b.height as f64) * y_frac).round() as i32;
+        (cx, cy)
+    }
+
+    /// Minimum hit target for click feedback (accessibility-sized).
+    pub fn click_hit_bounds(&self) -> Rect {
+        const MIN_W: i32 = 24;
+        const MIN_H: i32 = 20;
+        let mut b = self.bounds;
+        if b.width < MIN_W {
+            let pad = (MIN_W - b.width) / 2;
+            b.x -= pad;
+            b.width = MIN_W;
+        }
+        if b.height < MIN_H {
+            let pad = (MIN_H - b.height) / 2;
+            b.y -= pad;
+            b.height = MIN_H;
+        }
+        b
+    }
+
+    fn is_text_like(&self) -> bool {
+        let k = self.kind.to_lowercase();
+        if k.contains("text") || k.contains("label") {
+            return true;
+        }
+        matches!(
+            self.source,
+            ElementSource::Ocr | ElementSource::Fused
+        ) && self.bounds.height <= 48
     }
 
     pub fn matches(&self, query: &str) -> bool {
@@ -589,6 +635,39 @@ mod tests {
         let a = Rect::new(0, 0, 10, 10);
         let b = Rect::new(2, 2, 10, 10);
         assert!(a.iou(&b) > 0.4);
+    }
+
+    #[test]
+    fn click_anchor_biases_ocr_text_downward() {
+        let el = ScreenElement {
+            source: ElementSource::Ocr,
+            text: "Guardar".into(),
+            bounds: Rect::new(100, 200, 80, 24),
+            window_id: WindowId(1),
+            kind: "text".into(),
+            confidence: 0.88,
+            automation_id: None,
+        };
+        let (cx, cy) = el.click_anchor();
+        let (gx, gy) = el.bounds.center();
+        assert_eq!(cx, gx);
+        assert!(cy > gy);
+    }
+
+    #[test]
+    fn click_hit_bounds_expands_tiny_ocr_word() {
+        let el = ScreenElement {
+            source: ElementSource::Ocr,
+            text: "OK".into(),
+            bounds: Rect::new(10, 10, 8, 10),
+            window_id: WindowId(1),
+            kind: "text".into(),
+            confidence: 0.88,
+            automation_id: None,
+        };
+        let hit = el.click_hit_bounds();
+        assert!(hit.width >= 24);
+        assert!(hit.height >= 20);
     }
 
     #[test]
