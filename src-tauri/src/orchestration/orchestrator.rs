@@ -12,6 +12,8 @@ use crate::accessibility::element::UiSnapshot;
 use crate::accessibility::scanner::{ScanContext, Scanner};
 use crate::i18n;
 use crate::llm::LlmClient;
+use crate::input::InputMonitor;
+use crate::orchestration::action_feedback;
 use crate::orchestration::decision::DecisionEngine;
 use crate::orchestration::detector::StateDetector;
 use crate::orchestration::intent::IntentRecognizer;
@@ -142,7 +144,6 @@ impl Orchestrator {
         }
 
         tokio::time::sleep(Duration::from_millis(POST_CONFIRM_MS)).await;
-        self.ensure_target_app(&intent);
 
         let scan_ctx =
             ScanContext::from_expected_window(template.expected_window.as_deref());
@@ -163,8 +164,17 @@ impl Orchestrator {
                 return;
             };
 
+            let mut input_monitor = InputMonitor::new();
+
             step.instruction = self
-                .instruction_for_step(&step, &snapshot_before, &intent, &template, true)
+                .instruction_for_step(
+                    &step,
+                    &snapshot_before,
+                    &intent,
+                    &template,
+                    &input_monitor.poll(),
+                    true,
+                )
                 .await;
 
             session.record(step.clone());
@@ -172,6 +182,7 @@ impl Orchestrator {
 
             let mut completed = false;
             let mut last_anchor = step.anchor_xy;
+            let mut rolling_snapshot = snapshot_before.clone();
 
             for poll in 0..GUIDE_MAX_POLLS {
                 if self.cancelled.load(Ordering::Relaxed) {
@@ -179,7 +190,29 @@ impl Orchestrator {
                 }
                 tokio::time::sleep(Duration::from_millis(GUIDE_POLL_MS)).await;
 
+                let input = input_monitor.poll();
                 let snapshot_after = self.scanner.snapshot_with_context(&scan_ctx);
+
+                if let Some(correction) = action_feedback::corrective_message(
+                    &step,
+                    &input,
+                    &rolling_snapshot,
+                    &snapshot_after,
+                    poll,
+                    self.lang,
+                ) {
+                    if step.instruction != correction {
+                        tracing::info!(
+                            target: "roota.orchestrator",
+                            cursor_x = input.cursor.x,
+                            cursor_y = input.cursor.y,
+                            "coaching correction"
+                        );
+                        step.instruction = correction;
+                        self.emit_step(sink.as_ref(), &step).await;
+                    }
+                }
+
                 let refreshed = match self.decision.next_step(
                     &intent,
                     &template,
@@ -202,6 +235,7 @@ impl Orchestrator {
                             &snapshot_after,
                             &intent,
                             &template,
+                            &input,
                             poll == 0,
                         )
                         .await;
@@ -216,6 +250,7 @@ impl Orchestrator {
                     &snapshot_after,
                     poll,
                 );
+                rolling_snapshot = snapshot_after;
                 if outcome.completed {
                     tracing::info!(
                         target: "roota.orchestrator",
@@ -253,14 +288,6 @@ impl Orchestrator {
         sink.send(OrchestratorEvent::GoalCompleted { steps: total })
             .await;
         sink.send(OrchestratorEvent::Finished).await;
-    }
-
-    fn ensure_target_app(&self, intent: &Intent) {
-        if intent.intent == "open_folder" || intent.intent == "move_file" || intent.intent == "delete_file"
-        {
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-            crate::shell::explorer::launch_file_explorer();
-        }
     }
 
     /// Perception gate: scan until target has coordinates, emitting prep overlay meanwhile.
@@ -359,6 +386,7 @@ impl Orchestrator {
         snapshot: &UiSnapshot,
         intent: &Intent,
         template: &GuidanceTemplate,
+        input: &crate::input::InputSample,
         allow_llm: bool,
     ) -> String {
         let fallback = if step.anchor_xy.is_none() {
@@ -388,6 +416,15 @@ impl Orchestrator {
             snapshot.window.clone()
         };
 
+        let cursor_line = i18n::t(
+            "guidance.cursor_position",
+            self.lang,
+            &[
+                ("x", &input.cursor.x.to_string()),
+                ("y", &input.cursor.y.to_string()),
+            ],
+        );
+
         let prompt = prompts::render_instruction_step(InstructionPromptContext {
             goal: &intent.intent,
             step_index: step.index,
@@ -396,6 +433,7 @@ impl Orchestrator {
             target: &step.target_text,
             window_title: &window_title,
             visible_elements: &visible,
+            cursor_line: &cursor_line,
             target_on_screen: true,
         });
 

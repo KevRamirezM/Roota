@@ -61,7 +61,35 @@ const ES: &[(&str, &str)] = &[
     ),
     (
         "guidance.prep_open_explorer",
-        "Abre el Explorador de archivos (icono de carpeta amarilla) y deja la ventana visible. Busco «{target}»…",
+        "Tú abre el Explorador de archivos (icono de carpeta amarilla) y déjalo visible. Yo no lo abro por ti — busco «{target}» en tu pantalla…",
+    ),
+    (
+        "guidance.cursor_position",
+        "Posición del cursor del usuario: ({x}, {y})",
+    ),
+    (
+        "guidance.wrong_click_location",
+        "Ese clic no fue sobre «{target}». Mira el círculo en pantalla e inténtalo otra vez ahí.",
+    ),
+    (
+        "guidance.wrong_single_click",
+        "Necesitas doble clic en «{target}», no un solo clic.",
+    ),
+    (
+        "guidance.wrong_left_click_need_right",
+        "En «{target}» usa clic derecho del ratón, no el izquierdo.",
+    ),
+    (
+        "guidance.wrong_right_click_need_left",
+        "En «{target}» usa clic izquierdo normal, no clic derecho.",
+    ),
+    (
+        "guidance.wrong_focus_roota",
+        "Volviste a la ventana de Roota. Haz clic en la ventana que estás aprendiendo a usar.",
+    ),
+    (
+        "guidance.wrong_window",
+        "Se abrió «{window}» en lugar de lo esperado. Vuelve y busca «{target}».",
     ),
     (
         "guidance.waiting_for_screen",
@@ -177,7 +205,35 @@ const EN: &[(&str, &str)] = &[
     ),
     (
         "guidance.prep_open_explorer",
-        "Open File Explorer (yellow folder icon) and keep it visible. I'm looking for «{target}»…",
+        "Please open File Explorer yourself (yellow folder icon) and keep it visible. I won't open it for you — I'm looking for «{target}» on your screen…",
+    ),
+    (
+        "guidance.cursor_position",
+        "User cursor position: ({x}, {y})",
+    ),
+    (
+        "guidance.wrong_click_location",
+        "That click wasn't on «{target}». Look at the circle on screen and try again there.",
+    ),
+    (
+        "guidance.wrong_single_click",
+        "You need to double-click «{target}», not a single click.",
+    ),
+    (
+        "guidance.wrong_left_click_need_right",
+        "On «{target}» use right-click, not left-click.",
+    ),
+    (
+        "guidance.wrong_right_click_need_left",
+        "On «{target}» use a normal left-click, not right-click.",
+    ),
+    (
+        "guidance.wrong_focus_roota",
+        "You switched back to Roota. Click the window you're learning to use.",
+    ),
+    (
+        "guidance.wrong_window",
+        "«{window}» opened instead of what we expected. Go back and find «{target}».",
     ),
     (
         "guidance.waiting_for_screen",

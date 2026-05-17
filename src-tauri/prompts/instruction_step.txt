@@ -10,6 +10,8 @@ Ventana activa que el sistema ve: "{window_title}"
 Elementos visibles en pantalla ahora:
 {visible_elements}
 
+{cursor_line}
+
 {anchor_status}
 
 Escribe UNA frase corta, cálida y clara en español. Di exactamente qué hacer y dónde mirar.

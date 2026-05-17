@@ -16,6 +16,7 @@ pub struct InstructionPromptContext<'a> {
     pub target: &'a str,
     pub window_title: &'a str,
     pub visible_elements: &'a str,
+    pub cursor_line: &'a str,
     pub target_on_screen: bool,
 }
 
@@ -33,5 +34,6 @@ pub fn render_instruction_step(ctx: InstructionPromptContext<'_>) -> String {
         .replace("{target}", ctx.target)
         .replace("{window_title}", ctx.window_title)
         .replace("{visible_elements}", ctx.visible_elements)
+        .replace("{cursor_line}", ctx.cursor_line)
         .replace("{anchor_status}", anchor_status)
 }

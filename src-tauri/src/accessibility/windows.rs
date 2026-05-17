@@ -11,7 +11,7 @@ use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 use crate::accessibility::element::{UiElement, UiSnapshot};
 use crate::accessibility::scanner::{ScanContext, Scanner};
 
-const MAX_ELEMENTS: usize = 400;
+const MAX_ELEMENTS: usize = 600;
 
 const SKIP_CONTROL_MARKERS: &[&str] = &[
     "TitleBar",

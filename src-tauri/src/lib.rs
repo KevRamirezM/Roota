@@ -3,6 +3,7 @@
 
 pub mod accessibility;
 pub mod commands;
+pub mod input;
 pub mod i18n;
 pub mod llm;
 pub mod orchestration;
