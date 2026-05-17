@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::accessibility::element::{UiElement, UiSnapshot};
 use crate::i18n;
-use crate::orchestration::state::{GuideStep, Intent, SessionState};
+use crate::orchestration::state::{ActionVerb, GuideStep, Intent, SessionState};
 use crate::orchestration::templates::{GuidanceTemplate, StepBlueprint};
 use crate::safety::{ActionType, GuideAction, SafetyGuard};
 use crate::settings::Lang;
@@ -40,7 +40,7 @@ impl DecisionEngine {
         }
         let blueprint = &template.steps[session.step_index];
         let target_text = materialise_target(blueprint, intent);
-        let element = find_element(snapshot, &target_text, blueprint);
+        let element = find_element(snapshot, &target_text, blueprint, blueprint.action);
         let anchor = element.map(UiElement::center);
         let anchor_bounds = element.map(|e| (e.x, e.y, e.width, e.height));
 
@@ -80,6 +80,7 @@ fn find_element<'a>(
     snapshot: &'a UiSnapshot,
     target_text: &str,
     blueprint: &StepBlueprint,
+    action: ActionVerb,
 ) -> Option<&'a UiElement> {
     if target_text.is_empty() {
         return None;
@@ -94,7 +95,7 @@ fn find_element<'a>(
         }
         queries.extend(search_queries(token));
     }
-    snapshot.find_best(&queries)
+    snapshot.find_best_for_action(&queries, action)
 }
 
 /// Bilingual / alias variants for common Explorer and browser labels.

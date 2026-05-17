@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::orchestration::state::ActionVerb;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiElement {
@@ -50,11 +52,24 @@ impl UiSnapshot {
 
     /// Best match across several query variants (exact > prefix > contains).
     pub fn find_best<'a>(&'a self, queries: &[String]) -> Option<&'a UiElement> {
+        self.find_best_for_action(queries, ActionVerb::Click)
+    }
+
+    /// Picks the best clickable target, preferring navigation items over chrome.
+    pub fn find_best_for_action<'a>(
+        &'a self,
+        queries: &[String],
+        action: ActionVerb,
+    ) -> Option<&'a UiElement> {
         let mut best: Option<(&'a UiElement, i32)> = None;
         for element in &self.elements {
             for query in queries {
-                let score = match_score(element, query);
-                if score > 0 && best.map(|(_, s)| score > s).unwrap_or(true) {
+                let base = match_score(element, query);
+                if base == 0 {
+                    continue;
+                }
+                let score = rank_element(element, base, action);
+                if best.map(|(_, s)| score > s).unwrap_or(true) {
                     best = Some((element, score));
                 }
             }
@@ -100,9 +115,58 @@ fn match_score(element: &UiElement, query: &str) -> i32 {
     0
 }
 
+fn rank_element(element: &UiElement, base: i32, action: ActionVerb) -> i32 {
+    let mut score = base;
+    let kind = element.kind.to_lowercase();
+    let text = element.text.to_lowercase();
+
+    if kind.contains("treeitem") || kind.contains("listitem") {
+        score += 30;
+    } else if kind.contains("button") || kind.contains("hyperlink") {
+        score += 12;
+    }
+
+    if text.contains("barra de estado")
+        || text.contains("status bar")
+        || kind.contains("status")
+    {
+        score -= 50;
+    }
+    if text.contains("campo propiedades") || text.contains("modos de vista") {
+        score -= 35;
+    }
+    if text.contains("controlar host") || text.contains("vertical") && text.len() < 12 {
+        score -= 25;
+    }
+
+    // Sidebar / navigation pane tends to be on the left in Explorer.
+    if element.x < 380 && element.width < 320 && element.height >= 18 && element.height <= 48 {
+        score += 20;
+    }
+
+    if matches!(action, ActionVerb::DoubleClick | ActionVerb::Click) && element.height > 64 {
+        score -= 15;
+    }
+
+    score
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tree_item(text: &str, x: i32, y: i32) -> UiElement {
+        UiElement {
+            kind: "TreeItem".into(),
+            text: text.into(),
+            x,
+            y,
+            width: 200,
+            height: 32,
+            automation_id: Some(text.to_lowercase()),
+            window: "Explorer".into(),
+        }
+    }
 
     fn el(text: &str, x: i32, y: i32, w: i32, h: i32) -> UiElement {
         UiElement {
@@ -155,5 +219,21 @@ mod tests {
         };
         let found = snap.find_best(&["descargas".into()]).unwrap();
         assert_eq!(found.text, "Descargas");
+    }
+
+    #[test]
+    fn find_best_for_action_prefers_sidebar_treeitem() {
+        let snap = UiSnapshot {
+            window: "Descargas - Explorador".into(),
+            elements: vec![
+                el("Descargas", 400, 0, 800, 40),
+                tree_item("Descargas", 80, 220),
+            ],
+        };
+        let found = snap
+            .find_best_for_action(&["descargas".into()], ActionVerb::DoubleClick)
+            .unwrap();
+        assert_eq!(found.kind, "TreeItem");
+        assert_eq!(found.x, 80);
     }
 }

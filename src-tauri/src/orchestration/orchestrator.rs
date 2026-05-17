@@ -1,6 +1,4 @@
-//! Drives the classify -> confirm -> step-loop pipeline. Pure async,
-//! emits typed events through a Tauri channel-style sender so the
-//! frontend can listen without coupling the brain to Tauri itself.
+//! Drives the classify -> confirm -> perceive -> point -> verify pipeline (PRD §8).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -17,16 +15,18 @@ use crate::llm::LlmClient;
 use crate::orchestration::decision::DecisionEngine;
 use crate::orchestration::detector::StateDetector;
 use crate::orchestration::intent::IntentRecognizer;
-use crate::orchestration::state::{ActionVerb, GuideStep, SessionState};
+use crate::orchestration::state::{ActionVerb, GuideStep, Intent, SessionState};
 use crate::orchestration::templates::GuidanceTemplate;
 use crate::orchestration::templates::TemplateRegistry;
 use crate::prompts::{self, InstructionPromptContext};
 use crate::settings::Lang;
 
-const SCAN_RETRY_ATTEMPTS: u32 = 10;
-const SCAN_RETRY_MS: u64 = 800;
-const POST_CONFIRM_FOCUS_MS: u64 = 900;
-const STEP_LLM_TIMEOUT_SECS: f32 = 12.0;
+const PERCEPTION_POLL_MS: u64 = 700;
+const PERCEPTION_MAX_ATTEMPTS: u32 = 28;
+const GUIDE_POLL_MS: u64 = 500;
+const GUIDE_MAX_POLLS: u32 = 60;
+const POST_CONFIRM_MS: u64 = 600;
+const STEP_LLM_TIMEOUT_SECS: f32 = 6.0;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", content = "data")]
@@ -141,54 +141,75 @@ impl Orchestrator {
             return;
         }
 
-        tokio::time::sleep(Duration::from_millis(POST_CONFIRM_FOCUS_MS)).await;
+        tokio::time::sleep(Duration::from_millis(POST_CONFIRM_MS)).await;
+        self.ensure_target_app(&intent);
 
-        let scan_ctx = ScanContext::from_expected_window(
-            template.expected_window.as_deref(),
-        );
+        let scan_ctx =
+            ScanContext::from_expected_window(template.expected_window.as_deref());
 
         let mut session = SessionState::default();
         session.begin(intent.clone(), template.steps.len());
 
         while !session.completed && !self.cancelled.load(Ordering::Relaxed) {
-            let (snapshot_before, mut step) = match self
-                .prepare_step(&intent, &template, &scan_ctx, &session)
+            let Some((snapshot_before, mut step)) = self
+                .wait_for_target(sink.as_ref(), &intent, &template, &scan_ctx, &session)
                 .await
-            {
-                Ok(pair) => pair,
-                Err(err) => {
-                    sink.send(OrchestratorEvent::Error {
-                        message: err.to_string(),
-                    })
-                    .await;
-                    sink.send(OrchestratorEvent::Finished).await;
-                    return;
-                }
+            else {
+                sink.send(OrchestratorEvent::Error {
+                    message: i18n::t("guidance.perception_failed", self.lang, &[]),
+                })
+                .await;
+                sink.send(OrchestratorEvent::Finished).await;
+                return;
             };
 
             step.instruction = self
-                .instruction_from_screen(&step, &snapshot_before, &intent, &template, &session)
+                .instruction_for_step(&step, &snapshot_before, &intent, &template, true)
                 .await;
 
             session.record(step.clone());
-            sink.send(OrchestratorEvent::StepReady { step: step.clone() })
-                .await;
-            if let Some((x, y)) = step.anchor_xy {
-                sink.send(OrchestratorEvent::AnchorChanged {
-                    x,
-                    y,
-                    label: step.target_text.clone(),
-                })
-                .await;
-            }
+            self.emit_step(sink.as_ref(), &step).await;
 
             let mut completed = false;
-            for poll in 0..60u32 {
+            let mut last_anchor = step.anchor_xy;
+
+            for poll in 0..GUIDE_MAX_POLLS {
                 if self.cancelled.load(Ordering::Relaxed) {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(Duration::from_millis(GUIDE_POLL_MS)).await;
+
                 let snapshot_after = self.scanner.snapshot_with_context(&scan_ctx);
+                let refreshed = match self.decision.next_step(
+                    &intent,
+                    &template,
+                    &snapshot_after,
+                    &session,
+                ) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+
+                if refreshed.anchor_xy.is_some()
+                    && (last_anchor != refreshed.anchor_xy
+                        || poll == 0
+                        || refreshed.anchor_bounds != step.anchor_bounds)
+                {
+                    let mut updated = refreshed;
+                    updated.instruction = self
+                        .instruction_for_step(
+                            &updated,
+                            &snapshot_after,
+                            &intent,
+                            &template,
+                            poll == 0,
+                        )
+                        .await;
+                    step = updated;
+                    last_anchor = step.anchor_xy;
+                    self.emit_step(sink.as_ref(), &step).await;
+                }
+
                 let outcome = self.detector.is_completed(
                     &step,
                     &snapshot_before,
@@ -196,6 +217,11 @@ impl Orchestrator {
                     poll,
                 );
                 if outcome.completed {
+                    tracing::info!(
+                        target: "roota.orchestrator",
+                        reason = %outcome.reason,
+                        "step completed"
+                    );
                     completed = true;
                     let finished_index = step.index;
                     session.advance();
@@ -208,6 +234,7 @@ impl Orchestrator {
                     break;
                 }
             }
+
             if !completed {
                 sink.send(OrchestratorEvent::Error {
                     message: i18n::t(
@@ -228,64 +255,130 @@ impl Orchestrator {
         sink.send(OrchestratorEvent::Finished).await;
     }
 
-    /// Scan until the target appears on screen or retries exhaust (PRD: read then guide).
-    async fn prepare_step(
+    fn ensure_target_app(&self, intent: &Intent) {
+        if intent.intent == "open_folder" || intent.intent == "move_file" || intent.intent == "delete_file"
+        {
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            crate::shell::explorer::launch_file_explorer();
+        }
+    }
+
+    /// Perception gate: scan until target has coordinates, emitting prep overlay meanwhile.
+    async fn wait_for_target<S: EventSink + ?Sized>(
         &self,
-        intent: &crate::orchestration::state::Intent,
+        sink: &S,
+        intent: &Intent,
         template: &GuidanceTemplate,
         scan_ctx: &ScanContext,
         session: &SessionState,
-    ) -> Result<(UiSnapshot, GuideStep), crate::orchestration::decision::StepResolutionError> {
-        let mut last_snapshot = UiSnapshot::default();
-        let mut last_step = None;
-
-        for attempt in 0..SCAN_RETRY_ATTEMPTS {
+    ) -> Option<(UiSnapshot, GuideStep)> {
+        for attempt in 0..PERCEPTION_MAX_ATTEMPTS {
             if self.cancelled.load(Ordering::Relaxed) {
-                break;
+                return None;
             }
-            let snapshot = self.scanner.snapshot_with_context(scan_ctx);
-            last_snapshot = snapshot.clone();
-            let step = self
-                .decision
-                .next_step(intent, template, &snapshot, session)?;
-            let found = step.anchor_xy.is_some();
-            tracing::info!(
-                target: "roota.orchestrator",
-                attempt,
-                window = %snapshot.window,
-                elements = snapshot.elements.len(),
-                target = %step.target_text,
-                found,
-                "prepare_step scan"
-            );
-            last_step = Some(step.clone());
-            if found {
-                return Ok((snapshot, step));
-            }
-            if attempt + 1 < SCAN_RETRY_ATTEMPTS {
-                tokio::time::sleep(Duration::from_millis(SCAN_RETRY_MS)).await;
-            }
-        }
 
-        let step = last_step.ok_or(crate::orchestration::decision::StepResolutionError::NoMoreSteps)?;
-        Ok((last_snapshot, step))
+            let snapshot = self.scanner.snapshot_with_context(scan_ctx);
+            if let Ok(step) = self
+                .decision
+                .next_step(intent, template, &snapshot, session)
+            {
+                if step.anchor_xy.is_some() {
+                    tracing::info!(
+                        target: "roota.orchestrator",
+                        attempt,
+                        window = %snapshot.window,
+                        elements = snapshot.elements.len(),
+                        "target located on screen"
+                    );
+                    return Some((snapshot, step));
+                }
+            }
+
+            if attempt == 0 || attempt.is_multiple_of(3) {
+                let prep = self.prep_step(session, template, &snapshot, intent);
+                self.emit_step(sink, &prep).await;
+            }
+
+            tokio::time::sleep(Duration::from_millis(PERCEPTION_POLL_MS)).await;
+        }
+        None
     }
 
-    /// LLM generates the instruction from what is actually visible (PRD §8.3).
-    async fn instruction_from_screen(
+    fn prep_step(
+        &self,
+        session: &SessionState,
+        template: &GuidanceTemplate,
+        snapshot: &UiSnapshot,
+        intent: &Intent,
+    ) -> GuideStep {
+        let instruction = if snapshot.window.is_empty() || snapshot.elements.is_empty() {
+            i18n::t(
+                "guidance.prep_open_explorer",
+                self.lang,
+                &[("target", &intent.target)],
+            )
+        } else {
+            i18n::t(
+                "guidance.waiting_for_screen",
+                self.lang,
+                &[
+                    ("window", &snapshot.window),
+                    ("count", &snapshot.elements.len().to_string()),
+                    ("target", &intent.target),
+                ],
+            )
+        };
+        GuideStep {
+            index: session.step_index + 1,
+            total: template.steps.len(),
+            action: ActionVerb::Locate,
+            target_text: intent.target.clone(),
+            instruction,
+            anchor_xy: None,
+            anchor_bounds: None,
+        }
+    }
+
+    async fn emit_step<S: EventSink + ?Sized>(&self, sink: &S, step: &GuideStep) {
+        sink.send(OrchestratorEvent::StepReady { step: step.clone() })
+            .await;
+        if let Some((x, y)) = step.anchor_xy {
+            sink.send(OrchestratorEvent::AnchorChanged {
+                x,
+                y,
+                label: step.target_text.clone(),
+            })
+            .await;
+        }
+    }
+
+    /// Instant copy when waiting; LLM only when we have a live anchor (PRD §8.3).
+    async fn instruction_for_step(
         &self,
         step: &GuideStep,
         snapshot: &UiSnapshot,
-        intent: &crate::orchestration::state::Intent,
+        intent: &Intent,
         template: &GuidanceTemplate,
-        _session: &SessionState,
+        allow_llm: bool,
     ) -> String {
-        let fallback = step.instruction.clone();
-        let visible = if snapshot.elements.is_empty() {
-            i18n::t("guidance.screen_empty", self.lang, &[]).to_string()
+        let fallback = if step.anchor_xy.is_none() {
+            step.instruction.clone()
         } else {
-            snapshot.visible_summary(35)
+            let key = match step.action {
+                ActionVerb::Click => "guidance.click_target",
+                ActionVerb::DoubleClick => "guidance.double_click_target",
+                ActionVerb::RightClick => "guidance.right_click_target",
+                ActionVerb::Type => "guidance.type_in_target",
+                ActionVerb::Locate => "guidance.locate_target",
+            };
+            i18n::t(key, self.lang, &[("target", &step.target_text)])
         };
+
+        if !allow_llm || step.anchor_xy.is_none() || snapshot.elements.is_empty() {
+            return fallback;
+        }
+
+        let visible = snapshot.visible_summary(35);
         let window_title = if snapshot.window.is_empty() {
             template
                 .expected_window
@@ -294,6 +387,7 @@ impl Orchestrator {
         } else {
             snapshot.window.clone()
         };
+
         let prompt = prompts::render_instruction_step(InstructionPromptContext {
             goal: &intent.intent,
             step_index: step.index,
@@ -302,7 +396,7 @@ impl Orchestrator {
             target: &step.target_text,
             window_title: &window_title,
             visible_elements: &visible,
-            target_on_screen: step.anchor_xy.is_some(),
+            target_on_screen: true,
         });
 
         let llm_fut = self
@@ -317,12 +411,11 @@ impl Orchestrator {
             Ok(Ok(text)) => {
                 let trimmed = text.trim().lines().next().unwrap_or("").trim().to_string();
                 if trimmed.len() >= 8 {
-                    tracing::info!(target: "roota.orchestrator", "LLM step instruction ready");
                     return trimmed;
                 }
             }
             Ok(Err(err)) => {
-                tracing::warn!(target: "roota.orchestrator", "LLM instruction failed: {err}");
+                tracing::warn!(target: "roota.orchestrator", "LLM instruction: {err}");
             }
             Err(_) => {
                 tracing::warn!(target: "roota.orchestrator", "LLM instruction timed out");

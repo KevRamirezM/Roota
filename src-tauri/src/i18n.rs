@@ -59,6 +59,18 @@ const ES: &[(&str, &str)] = &[
         "guidance.screen_empty",
         "(No se detectaron botones ni carpetas en la ventana activa — abre el Explorador de archivos u otra app.)",
     ),
+    (
+        "guidance.prep_open_explorer",
+        "Abre el Explorador de archivos (icono de carpeta amarilla) y deja la ventana visible. Busco «{target}»…",
+    ),
+    (
+        "guidance.waiting_for_screen",
+        "Veo «{window}» ({count} elementos). Localiza «{target}» en la pantalla — te señalaré dónde hacer clic.",
+    ),
+    (
+        "guidance.perception_failed",
+        "No pude ver tu escritorio. Abre el Explorador de archivos, espera un momento y vuelve a pedirme ayuda.",
+    ),
     ("action.click", "Clic con el botón izquierdo"),
     ("action.double_click", "Doble clic"),
     ("action.right_click", "Clic derecho"),
@@ -162,6 +174,18 @@ const EN: &[(&str, &str)] = &[
     (
         "guidance.screen_empty",
         "(No buttons or folders detected in the active window — open File Explorer or the right app.)",
+    ),
+    (
+        "guidance.prep_open_explorer",
+        "Open File Explorer (yellow folder icon) and keep it visible. I'm looking for «{target}»…",
+    ),
+    (
+        "guidance.waiting_for_screen",
+        "I see «{window}» ({count} items). Find «{target}» on screen — I'll show you where to click.",
+    ),
+    (
+        "guidance.perception_failed",
+        "I couldn't read your desktop. Open File Explorer, wait a moment, and ask me again.",
     ),
     ("action.click", "Left-click"),
     ("action.double_click", "Double-click"),
