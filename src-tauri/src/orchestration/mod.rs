@@ -12,6 +12,7 @@ pub mod recipes;
 pub mod replan;
 pub mod state;
 pub mod templates;
+pub mod vision_planner;
 
 pub use decision::{DecisionEngine, StepResolutionError};
 pub use detector::{StateDetector, StepCompletion};

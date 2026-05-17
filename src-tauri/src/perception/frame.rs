@@ -434,6 +434,20 @@ impl ScreenFrame {
             .filter(|e| is_interactable_kind(&e.kind))
             .count()
     }
+
+    /// True when perception already consumed a VLM this cycle (Moondream).
+    /// Used to skip the vision planner fallback to avoid duplicate Ollama calls.
+    pub fn perception_used_vlm(&self) -> bool {
+        self.quality == PerceptionQuality::VisionAssisted
+            || self.elements.iter().any(|e| e.source == ElementSource::Vlm)
+    }
+
+    /// Screen-space rect of the primary window, or empty rect if not found.
+    pub fn primary_capture_rect(&self) -> Rect {
+        self.primary_window()
+            .map(|w| w.bounds)
+            .unwrap_or_default()
+    }
 }
 
 /// Wall-clock helper: millis since UNIX epoch, 0 if the system clock is broken.

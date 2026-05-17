@@ -90,6 +90,7 @@ fn recipe_to_blueprint(s: RecipeStep) -> StepBlueprint {
         target_query: s.target_query,
         instruction_key: instruction_key_for(action),
         fallback_window: None,
+        hint_xy: None,
     }
 }
 

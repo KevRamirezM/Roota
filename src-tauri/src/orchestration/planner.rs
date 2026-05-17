@@ -24,6 +24,10 @@ const MAX_PLANNED_STEPS: usize = 6;
 struct PlannedStepJson {
     action: String,
     target: String,
+    #[serde(default)]
+    x: Option<i32>,
+    #[serde(default)]
+    y: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,11 +165,16 @@ pub fn parse_plan_json(value: serde_json::Value, goal_target: &str) -> Option<Gu
                 return None;
             }
             let action = parse_action(&s.action);
+            let hint_xy = match (s.x, s.y) {
+                (Some(x), Some(y)) => Some((x, y)),
+                _ => None,
+            };
             Some(StepBlueprint {
                 action,
                 target_query: target,
                 instruction_key: instruction_key_for(action),
                 fallback_window: None,
+                hint_xy,
             })
         })
         .take(MAX_PLANNED_STEPS)
@@ -218,6 +227,7 @@ fn blueprint(action: ActionVerb, target: &str) -> StepBlueprint {
         target_query: target.into(),
         instruction_key: instruction_key_for(action),
         fallback_window: None,
+        hint_xy: None,
     }
 }
 
@@ -375,6 +385,24 @@ mod tests {
         ElementSource, PerceptionQuality, Rect, ScreenElement, ScreenFrame, WindowId,
         WindowSnapshot,
     };
+
+    #[test]
+    fn parse_plan_json_preserves_hint_xy() {
+        let v = serde_json::json!({
+            "steps": [{"action": "click", "target": "Inicio", "x": 200, "y": 300}]
+        });
+        let t = parse_plan_json(v, "configuración").unwrap();
+        assert_eq!(t.steps[0].hint_xy, Some((200, 300)));
+    }
+
+    #[test]
+    fn parse_plan_json_no_xy_is_none() {
+        let v = serde_json::json!({
+            "steps": [{"action": "click", "target": "Inicio"}]
+        });
+        let t = parse_plan_json(v, "configuración").unwrap();
+        assert_eq!(t.steps[0].hint_xy, None);
+    }
 
     #[test]
     fn parse_valid_plan_json() {

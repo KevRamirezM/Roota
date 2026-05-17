@@ -84,6 +84,12 @@ pub struct PerceptionSettings {
     /// LLM prompt size caps (resolved in spec).
     pub prompt_max_elements: usize,
     pub prompt_max_windows: usize,
+    // --- Vision planner fallback (hybrid-vision-planner) ---
+    pub vision_planner_enabled: bool,
+    pub vision_planner_model: String,
+    pub vision_planner_timeout_secs: f32,
+    pub vision_planner_min_match: f32,
+    pub vision_planner_max_edge: u32,
 }
 
 impl Default for PerceptionSettings {
@@ -108,6 +114,11 @@ impl Default for PerceptionSettings {
             min_uia_elements: 3,
             prompt_max_elements: 40,
             prompt_max_windows: 3,
+            vision_planner_enabled: false,
+            vision_planner_model: "qwen2.5vl:3b".into(),
+            vision_planner_timeout_secs: 90.0,
+            vision_planner_min_match: 0.5,
+            vision_planner_max_edge: 768,
         }
     }
 }
@@ -146,6 +157,26 @@ impl PerceptionSettings {
             prompt_max_windows: env_parse(
                 "ROOTA_PROMPT_MAX_WINDOWS",
                 default.prompt_max_windows,
+            ),
+            vision_planner_enabled: env_parse_bool(
+                "ROOTA_VISION_PLANNER",
+                default.vision_planner_enabled,
+            ),
+            vision_planner_model: env_or(
+                "ROOTA_VISION_PLANNER_MODEL",
+                &default.vision_planner_model,
+            ),
+            vision_planner_timeout_secs: env_parse(
+                "ROOTA_VISION_PLANNER_TIMEOUT_SECS",
+                default.vision_planner_timeout_secs,
+            ),
+            vision_planner_min_match: env_parse(
+                "ROOTA_VISION_PLANNER_MIN_MATCH",
+                default.vision_planner_min_match,
+            ),
+            vision_planner_max_edge: env_parse(
+                "ROOTA_VISION_PLANNER_MAX_EDGE",
+                default.vision_planner_max_edge,
             ),
         }
     }
@@ -244,6 +275,16 @@ mod tests {
         assert_eq!(Lang::parse("es"), Lang::Es);
         assert_eq!(Lang::parse("EN"), Lang::En);
         assert_eq!(Lang::parse("zz"), Lang::Es);
+    }
+
+    #[test]
+    fn perception_defaults_vision_planner_off() {
+        let s = PerceptionSettings::default();
+        assert!(!s.vision_planner_enabled);
+        assert_eq!(s.vision_planner_model, "qwen2.5vl:3b");
+        assert!((s.vision_planner_timeout_secs - 90.0).abs() < f32::EPSILON);
+        assert!((s.vision_planner_min_match - 0.5).abs() < f32::EPSILON);
+        assert_eq!(s.vision_planner_max_edge, 768);
     }
 
     #[test]

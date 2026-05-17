@@ -5,6 +5,7 @@ pub const INTENT_CLASSIFIER: &str = include_str!("../prompts/intent_classifier.t
 pub const INSTRUCTION_STEP: &str = include_str!("../prompts/instruction_step.txt");
 pub const TASK_PLANNER: &str = include_str!("../prompts/task_planner.txt");
 pub const TASK_BRIEF: &str = include_str!("../prompts/task_brief.txt");
+pub const VISION_TASK_PLANNER: &str = include_str!("../prompts/vision_task_planner.txt");
 pub const WINDOWS_DESKTOP_GUIDE: &str = include_str!("../prompts/windows_desktop_guide.txt");
 pub const WINDOWS_DESKTOP_HINTS: &str = include_str!("../prompts/windows_desktop_hints.txt");
 pub const UNIFIED_BOOTSTRAP: &str = include_str!("../prompts/unified_bootstrap.txt");
@@ -34,6 +35,13 @@ pub fn render_unified_bootstrap(utterance: &str, allowed_intents: &[String]) -> 
     UNIFIED_BOOTSTRAP
         .replace("{allowed_intents}", &format_allowed_intents(allowed_intents))
         .replace("{utterance}", utterance)
+}
+
+pub fn render_vision_task_planner(goal_summary: &str, width: u32, height: u32) -> String {
+    VISION_TASK_PLANNER
+        .replace("{goal_summary}", goal_summary)
+        .replace("{width}", &width.to_string())
+        .replace("{height}", &height.to_string())
 }
 
 pub fn render_task_brief(utterance: &str, goal_target: &str) -> String {

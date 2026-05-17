@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ConfettiLayer } from "./ConfettiLayer";
 import { useOrchestrator } from "../hooks/useOrchestrator";
 import { t, type Lang } from "../i18n";
 import { togglePanel } from "../tauri-api";
@@ -45,6 +46,7 @@ export function MainScreen() {
 
   return (
     <div className="roota-shell">
+      <ConfettiLayer />
       <div className="roota-chrome" data-tauri-drag-region>
         <span className="chrome-brand" aria-hidden title={t("app.title", lang)} />
         <button

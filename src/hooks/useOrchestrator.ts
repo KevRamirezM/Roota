@@ -1,5 +1,6 @@
 import { useCallback, useReducer, useRef } from "react";
 
+import { celebrateTaskComplete } from "../lib/celebrate";
 import {
   cancelSession,
   confirmResponse,
@@ -94,7 +95,12 @@ export function useOrchestrator() {
   const submit = useCallback(async (utterance: string) => {
     dispatch({ type: "submit" });
     const channel = newOrchestratorChannel();
-    channel.onmessage = (msg) => dispatch({ type: "event", event: msg });
+    channel.onmessage = (msg) => {
+      if (msg.kind === "GoalCompleted") {
+        celebrateTaskComplete();
+      }
+      dispatch({ type: "event", event: msg });
+    };
     channelRef.current = channel;
     try {
       await startSession(utterance, channel);

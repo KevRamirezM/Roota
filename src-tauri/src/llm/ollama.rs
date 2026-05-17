@@ -47,6 +47,17 @@ impl OllamaClient {
         )
     }
 
+    /// Vision planner client (hybrid-vision-planner fallback).
+    pub fn for_vision_planner(settings: &Settings) -> Self {
+        Self::with_model(
+            settings,
+            settings.perception.vision_planner_model.clone(),
+            settings.perception.vision_planner_timeout_secs,
+            0.1,
+            settings.perception.vision_max_tokens,
+        )
+    }
+
     fn with_model(
         settings: &Settings,
         model: String,

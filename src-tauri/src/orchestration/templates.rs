@@ -11,6 +11,7 @@ pub struct StepBlueprint {
     pub target_query: String,
     pub instruction_key: String,
     pub fallback_window: Option<String>,
+    pub hint_xy: Option<(i32, i32)>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +77,7 @@ impl TemplateRegistry {
                             .instruction_key
                             .unwrap_or_else(|| "guidance.click_target".into()),
                         fallback_window: s.fallback_window,
+                        hint_xy: None,
                     })
                     .collect();
                 self.register(GuidanceTemplate {
@@ -123,6 +125,7 @@ pub fn default_registry() -> TemplateRegistry {
         target_query: target.into(),
         instruction_key: key.into(),
         fallback_window: None,
+        hint_xy: None,
     };
     r.register(GuidanceTemplate {
         intent: "open_folder".into(),

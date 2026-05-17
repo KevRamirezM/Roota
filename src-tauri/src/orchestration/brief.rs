@@ -21,6 +21,16 @@ pub struct TaskBrief {
 }
 
 impl TaskBrief {
+    pub fn empty() -> Self {
+        Self {
+            raw_utterance: String::new(),
+            goal_summary: String::new(),
+            app_hints: vec![],
+            object_hints: vec![],
+            risk_flags: vec![],
+        }
+    }
+
     pub fn enrich_scan_context(&self, scan_ctx: &mut ScanContext) {
         for h in &self.app_hints {
             let lower = h.to_lowercase();

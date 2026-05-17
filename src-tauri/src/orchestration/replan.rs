@@ -113,6 +113,7 @@ mod tests {
             target_query: target.into(),
             instruction_key: "guidance.click_target".into(),
             fallback_window: None,
+            hint_xy: None,
         }
     }
 

@@ -42,7 +42,8 @@ impl DecisionEngine {
         let blueprint = &template.steps[session.step_index];
         let target_text = materialise_target(blueprint, intent);
         let element = find_element(frame, &target_text, blueprint, blueprint.action, intent);
-        let anchor = element.map(ScreenElement::click_anchor);
+        let anchor = element.map(ScreenElement::click_anchor)
+            .or(blueprint.hint_xy);
         let anchor_bounds = element.map(|e| {
             let b = e.click_hit_bounds();
             (b.x, b.y, b.width, b.height)
@@ -259,6 +260,7 @@ mod tests {
                 target_query: "Terminal".into(),
                 instruction_key: "guidance.click_target".into(),
                 fallback_window: None,
+                hint_xy: None,
             }],
         };
         let mut session = SessionState::default();
@@ -309,5 +311,33 @@ mod tests {
             .unwrap();
         assert!(step.anchor_xy.is_none());
         assert_eq!(step.target_text, "Música");
+    }
+
+    #[test]
+    fn hint_xy_fallback_when_element_not_found() {
+        let frame = frame_with(vec![el("Descargas", 100, 300)], "Explorer");
+        let template = GuidanceTemplate {
+            intent: "windows_task".into(),
+            confirmation_action_key: "confirm.windows_task".into(),
+            expected_window: None,
+            steps: vec![StepBlueprint {
+                action: ActionVerb::Click,
+                target_query: "Música".into(),
+                instruction_key: "guidance.click_target".into(),
+                fallback_window: None,
+                hint_xy: Some((200, 300)),
+            }],
+        };
+        let intent = Intent {
+            intent: "windows_task".into(),
+            target: "Música".into(),
+            params: Default::default(),
+            raw_utterance: "abre música".into(),
+        };
+        let engine = DecisionEngine::new(Lang::Es);
+        let mut session = SessionState::default();
+        session.begin(intent.clone(), 1);
+        let step = engine.next_step(&intent, &template, &frame, &session).unwrap();
+        assert_eq!(step.anchor_xy, Some((200, 300)));
     }
 }

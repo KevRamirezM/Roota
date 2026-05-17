@@ -32,6 +32,7 @@ use crate::orchestration::replan::{ReplanEngine, ReplanReason};
 use crate::orchestration::state::{ActionVerb, GuideStep, Intent, SessionState};
 use crate::orchestration::templates::GuidanceTemplate;
 use crate::orchestration::templates::TemplateRegistry;
+use crate::orchestration::vision_planner::VisionTaskPlanner;
 use crate::perception::{
     cache::{FrameCache, InvalidateReason},
     frame::now_ms,
@@ -88,6 +89,7 @@ pub struct Orchestrator {
     templates: Arc<TemplateRegistry>,
     bootstrapper: TaskBootstrapper,
     planner: TaskPlanner,
+    vision_planner: VisionTaskPlanner,
     replan_engine: ReplanEngine,
     decision: DecisionEngine,
     detector: StateDetector,
@@ -122,12 +124,25 @@ impl Orchestrator {
             settings.llm_timeout_seconds,
             settings.planner_prompt_max_elements,
         );
+        let vision_planner = VisionTaskPlanner::new(&settings);
+        if vision_planner.is_available() {
+            tracing::info!(
+                target = "roota.vision_planner",
+                "vision planner enabled and model available"
+            );
+        } else {
+            tracing::warn!(
+                target = "roota.vision_planner",
+                "vision planner disabled (model not found or ROOTA_VISION_PLANNER=0)"
+            );
+        }
         Self {
             llm,
             perceiver,
             templates,
             bootstrapper,
             planner,
+            vision_planner,
             replan_engine,
             decision: DecisionEngine::new(lang),
             detector: StateDetector,
@@ -490,7 +505,7 @@ impl Orchestrator {
         sink.send(OrchestratorEvent::Finished).await;
     }
 
-    /// OBSERVE → PLAN (with optional second capture).
+    /// OBSERVE → PLAN (with optional second capture, then vision planner fallback).
     async fn observe_and_plan<S: EventSink + ?Sized>(
         &self,
         sink: &S,
@@ -501,7 +516,7 @@ impl Orchestrator {
         sink.send(OrchestratorEvent::Observing { pass: 1 }).await;
         let mut input_monitor = InputMonitor::new();
         let cursor = input_monitor.poll().cursor;
-        let frame = self
+        let mut frame = self
             .capture_frame(scan_ctx, cursor)
             .await
             .map_err(|_| i18n::t("guidance.perception_failed", self.lang, &[]))?;
@@ -523,6 +538,51 @@ impl Orchestrator {
                     .await;
                 report = PlanValidator::new().validate(&plan, &frame2);
                 partial = report.needs_reobserve;
+                frame = frame2;
+            }
+        }
+
+        if should_run_vision_planner(
+            self.settings.perception.vision_planner_enabled,
+            self.vision_planner.is_available(),
+            report.match_ratio,
+            self.settings.perception.vision_planner_min_match,
+            false,
+            frame.perception_used_vlm(),
+        ) {
+            sink.send(OrchestratorEvent::Observing { pass: 3 }).await;
+
+            let rect = frame.primary_capture_rect();
+            let lang = self.lang;
+            let plan_result = tokio::task::spawn_blocking({
+                let vp = self.vision_planner.clone();
+                let brief = brief.clone();
+                move || vp.plan_from_brief_blocking(&brief, rect, lang)
+            })
+            .await;
+
+            match plan_result {
+                Ok(Ok(vision_plan)) => {
+                    tracing::info!(
+                        target = "roota.vision_planner",
+                        steps = vision_plan.steps.len(),
+                        "vision planner produced plan"
+                    );
+                    plan = vision_plan;
+                    partial = PlanValidator::new().validate(&plan, &frame).needs_reobserve;
+                }
+                Ok(Err(err)) => {
+                    tracing::warn!(
+                        target = "roota.vision_planner",
+                        "vision planner failed: {err}"
+                    );
+                }
+                Err(join_err) => {
+                    tracing::warn!(
+                        target = "roota.vision_planner",
+                        "spawn_blocking join error: {join_err}"
+                    );
+                }
             }
         }
 
@@ -928,6 +988,21 @@ impl Orchestrator {
     }
 }
 
+fn should_run_vision_planner(
+    enabled: bool,
+    available: bool,
+    match_ratio: f32,
+    min_match: f32,
+    already_tried: bool,
+    perception_used_vlm: bool,
+) -> bool {
+    enabled
+        && available
+        && !already_tried
+        && match_ratio < min_match
+        && !perception_used_vlm
+}
+
 #[cfg(test)]
 mod orchestrator_event_tests {
     use super::*;
@@ -945,5 +1020,35 @@ mod orchestrator_event_tests {
         let j = serde_json::to_string(&e).unwrap();
         assert!(j.contains("PlanPreview"));
         assert!(j.contains("Descargas"));
+    }
+
+    #[test]
+    fn gate_runs_vision_planner() {
+        assert!(should_run_vision_planner(true, true, 0.3, 0.5, false, false));
+    }
+
+    #[test]
+    fn gate_skips_when_perception_used_vlm() {
+        assert!(!should_run_vision_planner(true, true, 0.3, 0.5, false, true));
+    }
+
+    #[test]
+    fn gate_skips_when_match_ratio_ok() {
+        assert!(!should_run_vision_planner(true, true, 0.8, 0.5, false, false));
+    }
+
+    #[test]
+    fn gate_skips_when_already_tried() {
+        assert!(!should_run_vision_planner(true, true, 0.3, 0.5, true, false));
+    }
+
+    #[test]
+    fn gate_skips_when_not_enabled() {
+        assert!(!should_run_vision_planner(false, true, 0.3, 0.5, false, false));
+    }
+
+    #[test]
+    fn gate_skips_when_not_available() {
+        assert!(!should_run_vision_planner(true, false, 0.3, 0.5, false, false));
     }
 }

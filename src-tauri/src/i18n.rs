@@ -141,7 +141,15 @@ const ES: &[(&str, &str)] = &[
     ),
     (
         "guidance.observing",
-        "Estoy mirando tu pantalla para planear los pasos…",
+        "I'm reading your screen to plan the steps…",
+    ),
+    (
+        "guidance.observing_vision",
+        "I'm reading the screen with vision assistance (may take up to 90 seconds)…",
+    ),
+    (
+        "guidance.observing_vision",
+        "Estoy leyendo la pantalla con visión asistida (puede tomar hasta 90 segundos)…",
     ),
     (
         "guidance.replanning",
