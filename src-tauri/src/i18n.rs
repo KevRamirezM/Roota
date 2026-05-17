@@ -99,6 +99,14 @@ const ES: &[(&str, &str)] = &[
         "guidance.perception_failed",
         "No pude ver tu escritorio. Abre el Explorador de archivos, espera un momento y vuelve a pedirme ayuda.",
     ),
+    (
+        "guidance.perception_limited",
+        "Estoy viendo la pantalla con detalle limitado;",
+    ),
+    (
+        "guidance.secure_desktop_blocked",
+        "Windows está mostrando una pantalla protegida (clave o aviso del sistema). Cuando vuelvas al escritorio normal, pídemelo otra vez.",
+    ),
     ("action.click", "Clic con el botón izquierdo"),
     ("action.double_click", "Doble clic"),
     ("action.right_click", "Clic derecho"),
@@ -242,6 +250,14 @@ const EN: &[(&str, &str)] = &[
     (
         "guidance.perception_failed",
         "I couldn't read your desktop. Open File Explorer, wait a moment, and ask me again.",
+    ),
+    (
+        "guidance.perception_limited",
+        "I'm reading the screen with limited detail;",
+    ),
+    (
+        "guidance.secure_desktop_blocked",
+        "Windows is showing a protected screen (login or system prompt). When you're back on the normal desktop, ask me again.",
     ),
     ("action.click", "Left-click"),
     ("action.double_click", "Double-click"),

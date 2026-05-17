@@ -8,6 +8,7 @@ pub mod i18n;
 pub mod llm;
 pub mod orchestration;
 pub mod overlay;
+pub mod perception;
 pub mod prompts;
 pub mod safety;
 pub mod settings;
@@ -21,8 +22,8 @@ use tauri::Manager;
 use tokio::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 
-use crate::accessibility::scanner::{get_scanner, Scanner};
 use crate::orchestration::{default_registry, Orchestrator, TemplateRegistry};
+use crate::perception::{build_perceiver, Perceiver};
 use crate::settings::Settings;
 
 pub struct AppState {
@@ -74,21 +75,20 @@ pub fn run() {
         .expect("tokio runtime");
 
     let llm = runtime.block_on(crate::llm::build_llm(&settings));
-    let scanner: Arc<dyn Scanner> = Arc::from(get_scanner());
+    let perceiver: Arc<dyn Perceiver> = build_perceiver(&settings);
     let templates = Arc::new(load_templates());
     let orchestrator = Arc::new(Orchestrator::new(
         llm,
-        scanner.clone(),
+        perceiver.clone(),
         templates,
-        settings.ui_language,
-        settings.llm_intent_timeout_seconds,
+        settings.clone(),
     ));
 
     tracing::info!(
         target: "roota",
-        "Boot: llm={} scanner={} lang={:?}",
+        "Boot: llm={} perceiver={} lang={:?}",
         orchestrator.llm_name(),
-        orchestrator.scanner_name(),
+        orchestrator.perceiver_name(),
         settings.ui_language,
     );
 

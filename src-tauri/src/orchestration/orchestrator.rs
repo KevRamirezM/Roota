@@ -1,4 +1,9 @@
-//! Drives the classify -> confirm -> perceive -> point -> verify pipeline (PRD §8).
+//! Drives the classify → confirm → perceive → point → verify pipeline (PRD §8).
+//!
+//! Universal perception version: the scanner has been replaced by a fallible
+//! `Perceiver` that returns a `ScreenFrame` (multi-window, screen-space). The
+//! decision, detector, action-feedback, and prompt layers all consume
+//! `ScreenFrame` directly — no `UiSnapshot` adapter is allowed in production.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -8,11 +13,10 @@ use serde::Serialize;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 
-use crate::accessibility::element::UiSnapshot;
-use crate::accessibility::scanner::{ScanContext, Scanner};
+use crate::accessibility::scanner::ScanContext;
 use crate::i18n;
-use crate::llm::LlmClient;
 use crate::input::InputMonitor;
+use crate::llm::LlmClient;
 use crate::orchestration::action_feedback;
 use crate::orchestration::decision::DecisionEngine;
 use crate::orchestration::detector::StateDetector;
@@ -20,15 +24,24 @@ use crate::orchestration::intent::IntentRecognizer;
 use crate::orchestration::state::{ActionVerb, GuideStep, Intent, SessionState};
 use crate::orchestration::templates::GuidanceTemplate;
 use crate::orchestration::templates::TemplateRegistry;
+use crate::perception::{
+    cache::{FrameCache, InvalidateReason},
+    frame::now_ms,
+    PerceptionContext, PerceptionError, PerceptionQuality, Perceiver, ScreenFrame,
+};
 use crate::prompts::{self, InstructionPromptContext};
-use crate::settings::Lang;
+use crate::settings::{Lang, Settings};
 
-const PERCEPTION_POLL_MS: u64 = 700;
+const PERCEPTION_POLL_MS: u64 = 500;
 const PERCEPTION_MAX_ATTEMPTS: u32 = 28;
-const GUIDE_POLL_MS: u64 = 500;
-const GUIDE_MAX_POLLS: u32 = 60;
-const POST_CONFIRM_MS: u64 = 600;
-const STEP_LLM_TIMEOUT_SECS: f32 = 6.0;
+/// Fast input sampling — catches click edges UIA would miss at 500ms.
+const INPUT_POLL_MS: u64 = 80;
+/// Full desktop capture only every N input polls unless the user clicked.
+const PERCEPTION_EVERY_N_POLLS: u32 = 5;
+const GUIDE_MAX_POLLS: u32 = 150;
+const POST_CONFIRM_MS: u64 = 400;
+const STEP_LLM_TIMEOUT_SECS: f32 = 4.0;
+const FRAME_CACHE_TTL_MS: u64 = 450;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", content = "data")]
@@ -49,7 +62,7 @@ pub trait EventSink: Send + Sync {
 
 pub struct Orchestrator {
     llm: Arc<dyn LlmClient>,
-    scanner: Arc<dyn Scanner>,
+    perceiver: Arc<dyn Perceiver>,
     templates: Arc<TemplateRegistry>,
     recognizer: IntentRecognizer,
     decision: DecisionEngine,
@@ -57,25 +70,26 @@ pub struct Orchestrator {
     pending_confirmation: Mutex<Option<oneshot::Sender<bool>>>,
     cancelled: AtomicBool,
     lang: Lang,
+    settings: Settings,
 }
 
 impl Orchestrator {
     pub fn new(
         llm: Arc<dyn LlmClient>,
-        scanner: Arc<dyn Scanner>,
+        perceiver: Arc<dyn Perceiver>,
         templates: Arc<TemplateRegistry>,
-        lang: Lang,
-        intent_timeout_secs: f32,
+        settings: Settings,
     ) -> Self {
+        let lang = settings.ui_language;
         let recognizer = IntentRecognizer::new(
             llm.clone(),
             templates.clone(),
             lang,
-            intent_timeout_secs,
+            settings.llm_intent_timeout_seconds,
         );
         Self {
             llm,
-            scanner,
+            perceiver,
             templates,
             recognizer,
             decision: DecisionEngine::new(lang),
@@ -83,6 +97,7 @@ impl Orchestrator {
             pending_confirmation: Mutex::new(None),
             cancelled: AtomicBool::new(false),
             lang,
+            settings,
         }
     }
 
@@ -145,14 +160,13 @@ impl Orchestrator {
 
         tokio::time::sleep(Duration::from_millis(POST_CONFIRM_MS)).await;
 
-        let scan_ctx =
-            ScanContext::from_expected_window(template.expected_window.as_deref());
+        let scan_ctx = ScanContext::from_expected_window(template.expected_window.as_deref());
 
         let mut session = SessionState::default();
         session.begin(intent.clone(), template.steps.len());
 
         while !session.completed && !self.cancelled.load(Ordering::Relaxed) {
-            let Some((snapshot_before, mut step)) = self
+            let Some((frame_before, mut step)) = self
                 .wait_for_target(sink.as_ref(), &intent, &template, &scan_ctx, &session)
                 .await
             else {
@@ -165,11 +179,13 @@ impl Orchestrator {
             };
 
             let mut input_monitor = InputMonitor::new();
+            let frame_cache = FrameCache::with_ttl(FRAME_CACHE_TTL_MS);
+            frame_cache.put(frame_before.clone());
 
             step.instruction = self
                 .instruction_for_step(
                     &step,
-                    &snapshot_before,
+                    &frame_before,
                     &intent,
                     &template,
                     &input_monitor.poll(),
@@ -182,22 +198,89 @@ impl Orchestrator {
 
             let mut completed = false;
             let mut last_anchor = step.anchor_xy;
-            let mut rolling_snapshot = snapshot_before.clone();
+            let mut rolling_frame = frame_before.clone();
+            let mut polls_since_capture: u32 = 0;
+            let mut target_click_count: u32 = 0;
 
             for poll in 0..GUIDE_MAX_POLLS {
                 if self.cancelled.load(Ordering::Relaxed) {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(GUIDE_POLL_MS)).await;
+                tokio::time::sleep(Duration::from_millis(INPUT_POLL_MS)).await;
 
                 let input = input_monitor.poll();
-                let snapshot_after = self.scanner.snapshot_with_context(&scan_ctx);
+
+                if input.left_click && action_feedback::click_on_target(&step, &input) {
+                    target_click_count = target_click_count.saturating_add(1);
+                }
+
+                // Fast path: correct click on target → advance without waiting for UIA.
+                if let Some(user_done) =
+                    action_feedback::user_action_completed(&step, &input, target_click_count)
+                {
+                    tracing::info!(
+                        target: "roota.orchestrator",
+                        reason = %user_done.reason,
+                        "step completed via user action"
+                    );
+                    completed = true;
+                    let finished_index = step.index;
+                    session.advance();
+                    if !session.completed {
+                        sink.send(OrchestratorEvent::StepCompleted {
+                            index: finished_index,
+                        })
+                        .await;
+                    }
+                    break;
+                }
+
+                let user_acted = input.left_click || input.right_click || input.double_click;
+                polls_since_capture += 1;
+                let need_capture = user_acted || polls_since_capture >= PERCEPTION_EVERY_N_POLLS;
+
+                let frame_after = if need_capture {
+                    polls_since_capture = 0;
+                    let invalidate = if user_acted {
+                        InvalidateReason::UserAction
+                    } else {
+                        InvalidateReason::Initial
+                    };
+                    match self
+                        .capture_frame_cached(
+                            &scan_ctx,
+                            input.cursor,
+                            &frame_cache,
+                            invalidate,
+                            true,
+                        )
+                        .await
+                    {
+                        Ok(f) => f,
+                        Err(err) => {
+                            tracing::warn!(
+                                target: "roota.orchestrator",
+                                "perception failed mid-guide: {err}"
+                            );
+                            continue;
+                        }
+                    }
+                } else if let Some(cached) = frame_cache.get(
+                    now_ms(),
+                    input.cursor,
+                    Some(rolling_frame.primary_window_id),
+                    InvalidateReason::Initial,
+                ) {
+                    cached
+                } else {
+                    continue;
+                };
 
                 if let Some(correction) = action_feedback::corrective_message(
                     &step,
                     &input,
-                    &rolling_snapshot,
-                    &snapshot_after,
+                    &rolling_frame,
+                    &frame_after,
                     poll,
                     self.lang,
                 ) {
@@ -213,60 +296,47 @@ impl Orchestrator {
                     }
                 }
 
-                let refreshed = match self.decision.next_step(
-                    &intent,
-                    &template,
-                    &snapshot_after,
-                    &session,
-                ) {
-                    Ok(s) => s,
-                    Err(_) => continue,
-                };
-
-                if refreshed.anchor_xy.is_some()
-                    && (last_anchor != refreshed.anchor_xy
-                        || poll == 0
-                        || refreshed.anchor_bounds != step.anchor_bounds)
-                {
-                    let mut updated = refreshed;
-                    updated.instruction = self
-                        .instruction_for_step(
-                            &updated,
-                            &snapshot_after,
-                            &intent,
-                            &template,
-                            &input,
-                            poll == 0,
-                        )
-                        .await;
-                    step = updated;
-                    last_anchor = step.anchor_xy;
-                    self.emit_step(sink.as_ref(), &step).await;
-                }
-
-                let outcome = self.detector.is_completed(
-                    &step,
-                    &snapshot_before,
-                    &snapshot_after,
-                    poll,
-                );
-                rolling_snapshot = snapshot_after;
-                if outcome.completed {
-                    tracing::info!(
-                        target: "roota.orchestrator",
-                        reason = %outcome.reason,
-                        "step completed"
-                    );
-                    completed = true;
-                    let finished_index = step.index;
-                    session.advance();
-                    if !session.completed {
-                        sink.send(OrchestratorEvent::StepCompleted {
-                            index: finished_index,
-                        })
-                        .await;
+                if need_capture {
+                    if let Ok(refreshed) =
+                        self.decision
+                            .next_step(&intent, &template, &frame_after, &session)
+                    {
+                        if refreshed.anchor_xy.is_some()
+                            && (last_anchor != refreshed.anchor_xy
+                                || refreshed.anchor_bounds != step.anchor_bounds)
+                        {
+                            let mut updated = refreshed;
+                            updated.instruction = step.instruction.clone();
+                            step = updated;
+                            last_anchor = step.anchor_xy;
+                            self.emit_step(sink.as_ref(), &step).await;
+                        }
                     }
-                    break;
+
+                    let outcome = self.detector.is_completed(
+                        &step,
+                        &frame_before,
+                        &frame_after,
+                        poll,
+                    );
+                    rolling_frame = frame_after;
+                    if outcome.completed {
+                        tracing::info!(
+                            target: "roota.orchestrator",
+                            reason = %outcome.reason,
+                            "step completed"
+                        );
+                        completed = true;
+                        let finished_index = step.index;
+                        session.advance();
+                        if !session.completed {
+                            sink.send(OrchestratorEvent::StepCompleted {
+                                index: finished_index,
+                            })
+                            .await;
+                        }
+                        break;
+                    }
                 }
             }
 
@@ -298,31 +368,42 @@ impl Orchestrator {
         template: &GuidanceTemplate,
         scan_ctx: &ScanContext,
         session: &SessionState,
-    ) -> Option<(UiSnapshot, GuideStep)> {
+    ) -> Option<(ScreenFrame, GuideStep)> {
+        let mut input_monitor = InputMonitor::new();
         for attempt in 0..PERCEPTION_MAX_ATTEMPTS {
             if self.cancelled.load(Ordering::Relaxed) {
                 return None;
             }
 
-            let snapshot = self.scanner.snapshot_with_context(scan_ctx);
-            if let Ok(step) = self
-                .decision
-                .next_step(intent, template, &snapshot, session)
-            {
+            let cursor = input_monitor.poll().cursor;
+            let frame = match self.capture_frame(scan_ctx, cursor).await {
+                Ok(f) => f,
+                Err(err) => {
+                    tracing::warn!(
+                        target: "roota.orchestrator",
+                        attempt,
+                        "perception failed: {err}"
+                    );
+                    tokio::time::sleep(Duration::from_millis(PERCEPTION_POLL_MS)).await;
+                    continue;
+                }
+            };
+            if let Ok(step) = self.decision.next_step(intent, template, &frame, session) {
                 if step.anchor_xy.is_some() {
                     tracing::info!(
                         target: "roota.orchestrator",
                         attempt,
-                        window = %snapshot.window,
-                        elements = snapshot.elements.len(),
+                        primary = %frame.primary_window_title(),
+                        windows = frame.windows.len(),
+                        elements = frame.elements.len(),
                         "target located on screen"
                     );
-                    return Some((snapshot, step));
+                    return Some((frame, step));
                 }
             }
 
-            if attempt == 0 || attempt.is_multiple_of(3) {
-                let prep = self.prep_step(session, template, &snapshot, intent);
+            if attempt == 0 || attempt % 3 == 0 {
+                let prep = self.prep_step(session, template, &frame, intent);
                 self.emit_step(sink, &prep).await;
             }
 
@@ -331,14 +412,63 @@ impl Orchestrator {
         None
     }
 
+    /// Capture a `ScreenFrame` on the blocking pool (UIA + optional vision
+    /// must not block the async runtime).
+    async fn capture_frame(
+        &self,
+        scan_ctx: &ScanContext,
+        cursor: crate::input::PhysicalPoint,
+    ) -> Result<ScreenFrame, PerceptionError> {
+        self.capture_frame_cached(
+            scan_ctx,
+            cursor,
+            &FrameCache::new(),
+            InvalidateReason::Initial,
+            false,
+        )
+        .await
+    }
+
+    /// Cached capture for the guide loop — skips expensive UIA when idle.
+    async fn capture_frame_cached(
+        &self,
+        scan_ctx: &ScanContext,
+        cursor: crate::input::PhysicalPoint,
+        cache: &FrameCache,
+        reason: InvalidateReason,
+        guide_mode: bool,
+    ) -> Result<ScreenFrame, PerceptionError> {
+        let now = now_ms();
+        if let Some(cached) = cache.get(now, cursor, None, reason) {
+            return Ok(cached);
+        }
+
+        let mut ctx = PerceptionContext::from_scan_ctx(scan_ctx, cursor);
+        let mut settings = self.settings.perception.clone();
+        if guide_mode {
+            // Lighter scan while coaching — fewer HWND walks, no vision.
+            settings.max_windows = settings.max_windows.min(4);
+            settings.vision_enabled = false;
+        }
+        ctx.settings = settings;
+        let perceiver = self.perceiver.clone();
+        let frame = tokio::task::spawn_blocking(move || perceiver.capture(&ctx))
+            .await
+            .map_err(|_| PerceptionError::ThreadJoin)??;
+        cache.put(frame.clone());
+        Ok(frame)
+    }
+
     fn prep_step(
         &self,
         session: &SessionState,
         template: &GuidanceTemplate,
-        snapshot: &UiSnapshot,
+        frame: &ScreenFrame,
         intent: &Intent,
     ) -> GuideStep {
-        let instruction = if snapshot.window.is_empty() || snapshot.elements.is_empty() {
+        let primary_title = frame.primary_window_title();
+        let element_count = frame.elements.len();
+        let instruction = if primary_title.is_empty() || element_count == 0 {
             i18n::t(
                 "guidance.prep_open_explorer",
                 self.lang,
@@ -349,8 +479,8 @@ impl Orchestrator {
                 "guidance.waiting_for_screen",
                 self.lang,
                 &[
-                    ("window", &snapshot.window),
-                    ("count", &snapshot.elements.len().to_string()),
+                    ("window", &primary_title),
+                    ("count", &element_count.to_string()),
                     ("target", &intent.target),
                 ],
             )
@@ -383,13 +513,13 @@ impl Orchestrator {
     async fn instruction_for_step(
         &self,
         step: &GuideStep,
-        snapshot: &UiSnapshot,
+        frame: &ScreenFrame,
         intent: &Intent,
         template: &GuidanceTemplate,
         input: &crate::input::InputSample,
         allow_llm: bool,
     ) -> String {
-        let fallback = if step.anchor_xy.is_none() {
+        let mut fallback = if step.anchor_xy.is_none() {
             step.instruction.clone()
         } else {
             let key = match step.action {
@@ -402,18 +532,28 @@ impl Orchestrator {
             i18n::t(key, self.lang, &[("target", &step.target_text)])
         };
 
-        if !allow_llm || step.anchor_xy.is_none() || snapshot.elements.is_empty() {
+        if frame.quality == PerceptionQuality::DegradedUiaOnly {
+            let limited = i18n::t("guidance.perception_limited", self.lang, &[]);
+            if !limited.starts_with("guidance.") {
+                fallback = format!("{limited} {fallback}");
+            }
+        }
+
+        if !allow_llm || step.anchor_xy.is_none() || frame.elements.is_empty() {
             return fallback;
         }
 
-        let visible = snapshot.visible_summary(35);
-        let window_title = if snapshot.window.is_empty() {
+        let perception = &self.settings.perception;
+        let visible = frame.visible_summary(perception.prompt_max_elements);
+        let window_list = frame.window_list_for_prompt(perception.prompt_max_windows);
+        let primary_title = frame.primary_window_title();
+        let window_title = if primary_title.is_empty() {
             template
                 .expected_window
                 .clone()
                 .unwrap_or_else(|| "la aplicación".into())
         } else {
-            snapshot.window.clone()
+            primary_title
         };
 
         let cursor_line = i18n::t(
@@ -425,6 +565,13 @@ impl Orchestrator {
             ],
         );
 
+        let warnings_summary = frame.warnings_summary();
+        let warnings_line = if warnings_summary.is_empty() {
+            String::new()
+        } else {
+            format!("Aviso de lectura: {warnings_summary}.")
+        };
+
         let prompt = prompts::render_instruction_step(InstructionPromptContext {
             goal: &intent.intent,
             step_index: step.index,
@@ -432,9 +579,12 @@ impl Orchestrator {
             action: &action_verb_label(step.action, self.lang),
             target: &step.target_text,
             window_title: &window_title,
+            window_list: &window_list,
             visible_elements: &visible,
             cursor_line: &cursor_line,
             target_on_screen: true,
+            perception_quality: frame.quality.label(),
+            warnings_line: &warnings_line,
         });
 
         let llm_fut = self
@@ -466,8 +616,8 @@ impl Orchestrator {
         self.llm.name()
     }
 
-    pub fn scanner_name(&self) -> &str {
-        self.scanner.name()
+    pub fn perceiver_name(&self) -> &str {
+        self.perceiver.name()
     }
 }
 

@@ -5,7 +5,12 @@ Paso {step_index} de {total_steps}
 Acción que debe hacer la persona: {action}
 Elemento objetivo: "{target}"
 
-Ventana activa que el sistema ve: "{window_title}"
+Ventana activa donde el sistema centrará la guía: "{window_title}"
+Calidad de lectura de pantalla: {perception_quality}
+{warnings_line}
+
+Ventanas visibles en pantalla (la marcada con * es la activa):
+{window_list}
 
 Elementos visibles en pantalla ahora:
 {visible_elements}

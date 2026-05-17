@@ -99,7 +99,7 @@ pub fn localize_target(target: &str, lang: Lang) -> String {
     }
 }
 
-fn extract_user_utterance<'a>(prompt: &'a str) -> &'a str {
+fn extract_user_utterance(prompt: &str) -> &str {
     if let Some(start) = prompt.rfind("Petición:") {
         let tail = &prompt[start..];
         if let Some(q0) = tail.find('"') {

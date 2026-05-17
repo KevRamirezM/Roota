@@ -262,6 +262,7 @@ pub async fn clear_overlay(app: AppHandle) -> Result<(), AppError> {
 }
 
 #[tauri::command]
+#[allow(clippy::needless_return)]
 pub fn toggle_panel(app: AppHandle) -> Result<bool, AppError> {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
@@ -275,6 +276,7 @@ pub fn toggle_panel(app: AppHandle) -> Result<bool, AppError> {
 }
 
 #[tauri::command]
+#[allow(clippy::needless_return)]
 pub fn panel_visible(app: AppHandle) -> Result<bool, AppError> {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {

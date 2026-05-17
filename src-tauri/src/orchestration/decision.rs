@@ -1,9 +1,10 @@
 use thiserror::Error;
 
-use crate::accessibility::element::{UiElement, UiSnapshot};
 use crate::i18n;
 use crate::orchestration::state::{ActionVerb, GuideStep, Intent, SessionState};
 use crate::orchestration::templates::{GuidanceTemplate, StepBlueprint};
+use crate::perception::ScreenElement;
+use crate::perception::ScreenFrame;
 use crate::safety::{ActionType, GuideAction, SafetyGuard};
 use crate::settings::Lang;
 
@@ -32,7 +33,7 @@ impl DecisionEngine {
         &self,
         intent: &Intent,
         template: &GuidanceTemplate,
-        snapshot: &UiSnapshot,
+        frame: &ScreenFrame,
         session: &SessionState,
     ) -> Result<GuideStep, StepResolutionError> {
         if session.step_index >= template.steps.len() {
@@ -40,9 +41,9 @@ impl DecisionEngine {
         }
         let blueprint = &template.steps[session.step_index];
         let target_text = materialise_target(blueprint, intent);
-        let element = find_element(snapshot, &target_text, blueprint, blueprint.action);
-        let anchor = element.map(UiElement::center);
-        let anchor_bounds = element.map(|e| (e.x, e.y, e.width, e.height));
+        let element = find_element(frame, &target_text, blueprint, blueprint.action);
+        let anchor = element.map(ScreenElement::center);
+        let anchor_bounds = element.map(|e| (e.bounds.x, e.bounds.y, e.bounds.width, e.bounds.height));
 
         let instruction = i18n::t(
             &blueprint.instruction_key,
@@ -77,11 +78,11 @@ fn materialise_target(blueprint: &StepBlueprint, intent: &Intent) -> String {
 }
 
 fn find_element<'a>(
-    snapshot: &'a UiSnapshot,
+    frame: &'a ScreenFrame,
     target_text: &str,
     blueprint: &StepBlueprint,
     action: ActionVerb,
-) -> Option<&'a UiElement> {
+) -> Option<&'a ScreenElement> {
     if target_text.is_empty() {
         return None;
     }
@@ -95,7 +96,7 @@ fn find_element<'a>(
         }
         queries.extend(search_queries(token));
     }
-    snapshot.find_best_for_action(&queries, action)
+    frame.find_best_for_action(&queries, action)
 }
 
 /// Bilingual / alias variants for common Explorer and browser labels.
@@ -130,26 +131,39 @@ fn search_queries(target: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::accessibility::element::UiElement;
     use crate::orchestration::templates::default_registry;
+    use crate::perception::{
+        ElementSource, PerceptionQuality, Rect, ScreenElement, ScreenFrame, WindowId,
+        WindowSnapshot,
+    };
 
-    fn snapshot(elements: Vec<UiElement>, window: &str) -> UiSnapshot {
-        UiSnapshot {
-            window: window.into(),
+    fn frame_with(elements: Vec<ScreenElement>, primary_title: &str) -> ScreenFrame {
+        ScreenFrame {
+            primary_window_id: WindowId(1),
+            windows: vec![WindowSnapshot {
+                id: WindowId(1),
+                title: primary_title.into(),
+                class_name: "CabinetWClass".into(),
+                bounds: Rect::new(0, 0, 1280, 720),
+                is_foreground: true,
+                z_order: 0,
+                uia_element_count: elements.len(),
+            }],
             elements,
+            quality: PerceptionQuality::Full,
+            ..ScreenFrame::empty()
         }
     }
 
-    fn el(text: &str, x: i32, y: i32) -> UiElement {
-        UiElement {
-            kind: "button".into(),
+    fn el(text: &str, x: i32, y: i32) -> ScreenElement {
+        ScreenElement {
+            source: ElementSource::Uia,
             text: text.into(),
-            x,
-            y,
-            width: 160,
-            height: 32,
+            bounds: Rect::new(x, y, 160, 32),
+            window_id: WindowId(1),
+            kind: "Button".into(),
+            confidence: 1.0,
             automation_id: Some(text.to_lowercase()),
-            window: "Explorer".into(),
         }
     }
 
@@ -163,12 +177,12 @@ mod tests {
             params: Default::default(),
             raw_utterance: "abre".into(),
         };
-        let snap = snapshot(vec![el("Descargas", 100, 300)], "Explorer");
+        let frame = frame_with(vec![el("Descargas", 100, 300)], "Explorer");
         let mut session = SessionState::default();
         session.begin(intent.clone(), template.steps.len());
         let engine = DecisionEngine::new(Lang::Es);
         let step = engine
-            .next_step(&intent, template, &snap, &session)
+            .next_step(&intent, template, &frame, &session)
             .unwrap();
         assert_eq!(step.target_text, "Descargas");
         assert_eq!(step.anchor_xy, Some((180, 316)));
@@ -185,12 +199,12 @@ mod tests {
             params: Default::default(),
             raw_utterance: "abre".into(),
         };
-        let snap = snapshot(vec![el("Downloads", 50, 200)], "Explorer");
+        let frame = frame_with(vec![el("Downloads", 50, 200)], "Explorer");
         let mut session = SessionState::default();
         session.begin(intent.clone(), template.steps.len());
         let engine = DecisionEngine::new(Lang::Es);
         let step = engine
-            .next_step(&intent, template, &snap, &session)
+            .next_step(&intent, template, &frame, &session)
             .unwrap();
         assert!(step.anchor_xy.is_some());
     }
@@ -205,12 +219,12 @@ mod tests {
             params: Default::default(),
             raw_utterance: "abre".into(),
         };
-        let snap = snapshot(vec![el("Descargas", 100, 300)], "Explorer");
+        let frame = frame_with(vec![el("Descargas", 100, 300)], "Explorer");
         let mut session = SessionState::default();
         session.begin(intent.clone(), template.steps.len());
         let engine = DecisionEngine::new(Lang::Es);
         let step = engine
-            .next_step(&intent, template, &snap, &session)
+            .next_step(&intent, template, &frame, &session)
             .unwrap();
         assert!(step.anchor_xy.is_none());
         assert!(step.anchor_bounds.is_none());

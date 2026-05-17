@@ -2,7 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PhysicalPoint {
     pub x: i32,
     pub y: i32,
@@ -16,7 +18,7 @@ pub struct InputSample {
     /// Left button went down on this sample (click start).
     pub left_click: bool,
     pub right_click: bool,
-    /// Heuristic: two left clicks within 500ms.
+    /// Heuristic: two left clicks within 500ms (also sticky — see below).
     pub double_click: bool,
 }
 
@@ -25,6 +27,8 @@ pub struct InputMonitor {
     prev_right: bool,
     last_left_click_at: Option<Instant>,
     last_left_click_pos: PhysicalPoint,
+    /// Stays true briefly after a double-click so slow guide loops still see it.
+    double_click_until: Option<Instant>,
 }
 
 impl Default for InputMonitor {
@@ -40,6 +44,7 @@ impl InputMonitor {
             prev_right: false,
             last_left_click_at: None,
             last_left_click_pos: PhysicalPoint::default(),
+            double_click_until: None,
         }
     }
 
@@ -48,15 +53,19 @@ impl InputMonitor {
         let left_click = sample.left_pressed && !self.prev_left;
         let right_click = sample.right_pressed && !self.prev_right;
 
-        let mut double_click = false;
+        let now = Instant::now();
+        let mut double_click = self
+            .double_click_until
+            .is_some_and(|until| now < until);
+
         if left_click {
-            let now = Instant::now();
             if let Some(prev) = self.last_left_click_at {
                 let dt = now.duration_since(prev);
                 let dx = (sample.cursor.x - self.last_left_click_pos.x).abs();
                 let dy = (sample.cursor.y - self.last_left_click_pos.y).abs();
-                if dt < Duration::from_millis(500) && dx < 8 && dy < 8 {
+                if dt < Duration::from_millis(600) && dx < 12 && dy < 12 {
                     double_click = true;
+                    self.double_click_until = Some(now + Duration::from_millis(800));
                 }
             }
             self.last_left_click_at = Some(now);
