@@ -135,10 +135,10 @@ export function OverlayGuidance() {
         ctx.fill();
 
         const hint = guidance.clickHint || t("guidance.hint.click", lang);
-        ctx.font = '700 18px "Segoe UI", system-ui, sans-serif';
+        ctx.font = '600 13px "Segoe UI", system-ui, sans-serif';
         const metrics = ctx.measureText(hint);
-        const pillW = metrics.width + 28;
-        const pillH = 36;
+        const pillW = metrics.width + 20;
+        const pillH = 28;
         const pillX = center.x - pillW / 2;
         const pillY = center.y + r + 16;
         const rad = 18;
@@ -157,7 +157,7 @@ export function OverlayGuidance() {
         ctx.fillText(hint, center.x, pillY + pillH / 2);
 
         if (guidance.targetLabel) {
-          ctx.font = '600 16px "Segoe UI", system-ui, sans-serif';
+          ctx.font = '500 12px "Segoe UI", system-ui, sans-serif';
           ctx.fillStyle = "rgba(255, 249, 237, 0.92)";
           ctx.fillText(guidance.targetLabel, center.x, pillY + pillH + 22);
         }

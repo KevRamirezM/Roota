@@ -1,8 +1,14 @@
 pub mod action_feedback;
+pub mod brief;
 pub mod decision;
 pub mod detector;
+pub mod guidance_copy;
 pub mod intent;
+pub mod plan;
+pub mod planner;
 pub mod orchestrator;
+pub mod recipes;
+pub mod replan;
 pub mod state;
 pub mod templates;
 

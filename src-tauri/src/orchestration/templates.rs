@@ -215,6 +215,13 @@ pub fn default_registry() -> TemplateRegistry {
         expected_window: Some("Word".into()),
         steps: vec![s(ActionVerb::Click, "Imprimir", "guidance.click_target")],
     });
+    // Placeholder — real steps are filled by TaskPlanner after the user confirms.
+    r.register(GuidanceTemplate {
+        intent: "windows_task".into(),
+        confirmation_action_key: "confirm.windows_task".into(),
+        expected_window: None,
+        steps: vec![],
+    });
     r
 }
 
@@ -238,6 +245,7 @@ mod tests {
             "reply_message",
             "open_word_document",
             "print_document",
+            "windows_task",
         ] {
             assert!(
                 known.contains(&needed.to_string()),

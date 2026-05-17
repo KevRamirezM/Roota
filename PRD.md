@@ -173,7 +173,7 @@ Now let's proceed to the next step.
 | **Accessibility API Engine** | Windows UI Automation API | Target UI node mapping, reading, and traversal |
 | **Visual Presentation Window** | Transparent Always-On-Top Overlay | Native drawing plane for markers and arrows |
 | **Local AI Runtime Engine** | Ollama / llama.cpp | On-device, resource-optimized LLM inference |
-| **Target LLM Weights** | Qwen2.5 3B | High-performance, low-parameter local language model |
+| **Target LLM Weights** | Qwen3 1.7B | High-performance, low-parameter local language model |
 | **Speech-to-Text Layer** | whisper.cpp | Offline, ultra-fast local voice transcription |
 | **Text-to-Speech Layer** | Piper TTS / Native Windows TTS | Low-latency local voice generation |
 | **Prototype Interface Shell** | PySide6 / CustomTkinter | Fast internal testing interface |

@@ -1,7 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::llm::stub::{classify_utterance, is_known_intent, localize_target, StubLlmClient};
+use crate::llm::stub::{
+    classify_utterance_detailed, is_known_intent, localize_target, StubLlmClient,
+};
 use crate::llm::LlmClient;
 use crate::orchestration::state::Intent;
 use crate::orchestration::templates::TemplateRegistry;
@@ -36,15 +38,16 @@ impl IntentRecognizer {
             return Intent::unknown(utterance);
         }
 
-        // Fast path: deterministic rules on the raw utterance (instant).
-        let fast = classify_utterance(trimmed);
-        if is_known_intent(&fast) {
+        // Fast path: only when a high-confidence regex rule matched (not generic fallback).
+        let (fast, rule_matched) = classify_utterance_detailed(trimmed);
+        if rule_matched && is_known_intent(&fast) {
             tracing::info!(target: "roota.intent", "stub fast-path for {:?}", trimmed);
             return self.value_to_intent(fast, utterance);
         }
 
         // Slow path: Ollama with a short cap so the UI is not blocked for 30s.
-        let prompt = prompts::render_intent_classifier(trimmed);
+        let allowed = self.templates.known_intents();
+        let prompt = prompts::render_intent_classifier(trimmed, &allowed);
         let llm_fut = self
             .llm
             .complete_json(&prompt, Some(prompts::SYSTEM_PROMPT));
@@ -61,7 +64,7 @@ impl IntentRecognizer {
                 StubLlmClient
                     .complete_json(trimmed, None)
                     .await
-                    .unwrap_or_else(|_| classify_utterance(trimmed))
+                    .unwrap_or_else(|_| classify_utterance_detailed(trimmed).0)
             }
             Err(_) => {
                 tracing::warn!(
@@ -69,7 +72,7 @@ impl IntentRecognizer {
                     "LLM timed out after {:?}; using stub fallback",
                     self.intent_timeout
                 );
-                classify_utterance(trimmed)
+                classify_utterance_detailed(trimmed).0
             }
         };
 
@@ -99,10 +102,17 @@ impl IntentRecognizer {
                 params.insert(k.clone(), s);
             }
         }
-        let final_intent = if self.templates.get(&intent_name).is_none() {
-            "unknown".to_string()
-        } else {
+        let final_intent = if self.templates.get(&intent_name).is_some() {
             intent_name
+        } else if intent_name == "unknown" || intent_name.is_empty() {
+            if raw_utterance.trim().is_empty() {
+                "unknown".to_string()
+            } else {
+                "windows_task".to_string()
+            }
+        } else {
+            // Model invented an intent id — treat as universal desktop task.
+            "windows_task".to_string()
         };
         Intent {
             intent: final_intent,
@@ -194,11 +204,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unregistered_intent_becomes_unknown() {
+    async fn unregistered_intent_becomes_windows_task() {
         let llm: Arc<dyn LlmClient> = Arc::new(BogusLlm);
         let templates = Arc::new(crate::orchestration::templates::default_registry());
         let rec = IntentRecognizer::new(llm, templates, Lang::Es, 10.0);
         let intent = rec.recognise("haz café").await;
-        assert_eq!(intent.intent, "unknown");
+        assert_eq!(intent.intent, "windows_task");
     }
 }

@@ -12,6 +12,8 @@ const W_CURSOR_INSIDE: i32 = 35;
 const W_HINT_MATCH: i32 = 50;
 const W_NONEMPTY_UIA: i32 = 10;
 const W_MODAL_OWNED: i32 = 30;
+/// System overlay HWNDs (touch keyboard, Input Experience) must not become primary.
+const W_JUNK_OVERLAY: i32 = -90;
 
 #[derive(Debug, Clone)]
 pub struct RankedWindow {
@@ -103,7 +105,35 @@ fn score_window(w: &WindowMeta, ctx: &PerceptionContext, all: &[WindowMeta]) -> 
         score += W_NONEMPTY_UIA / 2;
     }
 
+    if is_junk_overlay_window(w) {
+        score += W_JUNK_OVERLAY;
+    }
+
     score
+}
+
+/// Shell overlays and IME surfaces that steal foreground but are not user apps.
+fn is_junk_overlay_window(w: &WindowMeta) -> bool {
+    let title = w.title.to_lowercase();
+    let class = w.class_name.to_lowercase();
+
+    if title.contains("experiencia de entrada")
+        || title.contains("input experience")
+        || title.contains("windows input experience")
+        || title.contains("msctfime ui")
+        || title.contains("program manager")
+    {
+        return true;
+    }
+
+    if class.contains("foregroundstaging")
+        || class.contains("tooltips_class32")
+        || (class.contains("corewindow") && w.bounds.width < 320 && w.bounds.height < 200)
+    {
+        return true;
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -228,6 +258,20 @@ mod tests {
             .position(|r| r.id() == WindowId(12))
             .unwrap_or(usize::MAX);
         assert!(dialog_rank < other_rank);
+    }
+
+    #[test]
+    fn junk_overlay_loses_to_real_app() {
+        let mut overlay = meta(1, "Experiencia de entrada de Windows", 0, 0, 200, 80);
+        overlay.is_foreground = true;
+        let cursor = meta(2, "Cursor", 0, 0, 1280, 800);
+        let ctx = PerceptionContext {
+            cursor: PhysicalPoint { x: 640, y: 400 },
+            window_hints: vec!["cursor".into()],
+            settings: PerceptionSettings::default(),
+        };
+        let ranked = rank_windows(&[overlay, cursor], &ctx);
+        assert_eq!(ranked[0].title(), "Cursor");
     }
 
     #[test]

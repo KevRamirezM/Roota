@@ -1,9 +1,9 @@
 import { t, type Lang } from "../i18n";
 
 const EXAMPLES = [
-  "example.open_folder",
-  "example.open_browser",
-  "example.compose_email",
+  { key: "example.open_folder", icon: "✦" },
+  { key: "example.open_browser", icon: "◇" },
+  { key: "example.compose_email", icon: "◻" },
 ] as const;
 
 interface Props {
@@ -14,21 +14,25 @@ interface Props {
 
 export function ExamplePrompts({ lang = "es", disabled, onSelect }: Props) {
   return (
-    <section className="examples-block" aria-label={t("main.examples_title", lang)}>
-      <p className="examples-title">{t("main.examples_title", lang)}</p>
-      <div className="example-chips">
-        {EXAMPLES.map((key) => (
+    <nav className="quick-actions" aria-label={t("main.examples_title", lang)}>
+      {EXAMPLES.map((item, index) => (
+        <span key={item.key} className="quick-actions-item">
+          {index > 0 && <span className="quick-action-sep" aria-hidden>
+            ·
+          </span>}
           <button
-            key={key}
             type="button"
-            className="chip"
+            className="quick-action"
             disabled={disabled}
-            onClick={() => onSelect(t(key, lang))}
+            onClick={() => onSelect(t(item.key, lang))}
           >
-            {t(key, lang)}
+            <span className="quick-action-icon" aria-hidden>
+              {item.icon}
+            </span>
+            {t(item.key, lang)}
           </button>
-        ))}
-      </div>
-    </section>
+        </span>
+      ))}
+    </nav>
   );
 }

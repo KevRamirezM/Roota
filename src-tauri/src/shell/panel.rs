@@ -25,7 +25,8 @@ pub fn is_visible<R: Runtime>(app: &AppHandle<R>) -> bool {
         .unwrap_or(false)
 }
 
-pub fn position_bottom_right<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
+/// Place the assistant panel centered along the top edge of the active monitor.
+pub fn position_top_center<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
     let monitor = window
         .current_monitor()?
         .or_else(|| window.primary_monitor().ok().flatten());
@@ -34,9 +35,9 @@ pub fn position_bottom_right<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Re
     };
     let screen = monitor.size();
     let win = window.outer_size()?;
-    let x = screen.width as i32 - win.width as i32 - MARGIN_PX;
-    let y = screen.height as i32 - win.height as i32 - MARGIN_PX;
-    window.set_position(PhysicalPosition::new(x.max(MARGIN_PX), y.max(MARGIN_PX)))?;
+    let x = ((screen.width as i32 - win.width as i32) / 2).max(MARGIN_PX);
+    let y = MARGIN_PX;
+    window.set_position(PhysicalPosition::new(x, y))?;
     Ok(())
 }
 
@@ -51,7 +52,7 @@ pub fn show<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let Some(window) = panel_window(app) else {
         return Ok(());
     };
-    position_bottom_right(&window)?;
+    position_top_center(&window)?;
     let _ = window.set_skip_taskbar(false);
     window.show()?;
     let _ = window.unminimize();

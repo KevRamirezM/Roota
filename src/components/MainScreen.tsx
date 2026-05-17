@@ -9,7 +9,8 @@ import { GuidancePanel } from "./GuidancePanel";
 const lang: Lang = "es";
 
 export function MainScreen() {
-  const { phase, submit, respondToConfirmation, cancel, busy } = useOrchestrator();
+  const { phase, submit, respondToConfirmation, cancel, requestStuckHelp, busy } =
+    useOrchestrator();
   const [utterance, setUtterance] = useState("");
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -24,63 +25,98 @@ export function MainScreen() {
     setUtterance(text);
   };
 
-  const showExamples = phase.kind === "idle" || phase.kind === "cancelled" || phase.kind === "completed";
-  const canCancel = phase.kind === "running" || phase.kind === "classifying";
+  const showExamples =
+    phase.kind === "idle" || phase.kind === "cancelled" || phase.kind === "completed";
+  const canCancel =
+    phase.kind === "running" ||
+    phase.kind === "classifying" ||
+    phase.kind === "observing" ||
+    phase.kind === "plan_preview" ||
+    phase.kind === "replanning";
+  const showStuckHelp = phase.kind === "running" && !phase.stepSuccess;
+
+  const handleStop = () => {
+    if (canCancel) {
+      void cancel();
+    } else {
+      void togglePanel();
+    }
+  };
 
   return (
-    <main className="app-shell">
-      <header className="app-header" data-tauri-drag-region>
-        <span className="brand-mark" aria-hidden />
-        <h1 className="app-title">{t("app.title", lang)}</h1>
-        <p className="app-tagline">{t("app.subtitle", lang)}</p>
-        <p className="panel-shortcut-hint">{t("panel.shortcut_hint", lang)}</p>
-        <p className="safety-note">{t("guidance.safety_note", lang)}</p>
-      </header>
+    <div className="roota-shell">
+      <div className="roota-chrome" data-tauri-drag-region>
+        <span className="chrome-brand" aria-hidden title={t("app.title", lang)} />
+        <button
+          type="button"
+          className="chrome-hide"
+          onClick={() => void togglePanel()}
+          title={t("panel.shortcut_hint", lang)}
+        >
+          <span className="chrome-hide-chevron" aria-hidden>
+            ▾
+          </span>
+          {t("panel.hide", lang)}
+        </button>
+        <button
+          type="button"
+          className="chrome-stop"
+          onClick={handleStop}
+          title={canCancel ? t("main.cancel", lang) : t("panel.hide", lang)}
+          aria-label={canCancel ? t("main.cancel", lang) : t("panel.hide", lang)}
+        >
+          <span className="chrome-stop-icon" aria-hidden />
+        </button>
+      </div>
 
-      <GuidancePanel phase={phase} lang={lang} />
-
-      {showExamples && (
-        <ExamplePrompts lang={lang} disabled={busy} onSelect={handleExample} />
-      )}
-
-      <form className="composer" onSubmit={handleSubmit}>
-        <input
-          className="input"
-          type="text"
-          value={utterance}
-          onChange={(e) => setUtterance(e.target.value)}
-          placeholder={t("main.input_placeholder", lang)}
-          aria-label={t("main.greeting", lang)}
-          autoFocus
-          disabled={busy}
-        />
-        <div className="composer-actions">
-          <button
-            type="submit"
-            className="button button-primary"
-            disabled={busy || !utterance.trim()}
-          >
-            {t("main.send_button", lang)}
-          </button>
-          {canCancel && (
-            <button
-              type="button"
-              className="button button-ghost"
-              onClick={() => void cancel()}
-            >
-              {t("main.cancel", lang)}
-            </button>
-          )}
+      <GuidancePanel phase={phase} lang={lang}>
+        {showStuckHelp && (
           <button
             type="button"
-            className="button button-ghost"
-            onClick={() => void togglePanel()}
-            title={t("panel.shortcut_hint", lang)}
+            className="quick-action plan-stuck-help"
+            onClick={() => void requestStuckHelp()}
           >
-            {t("panel.hide", lang)}
+            {t("guidance.stuck_button", lang)}
           </button>
-        </div>
-      </form>
+        )}
+
+        {showExamples && (
+          <ExamplePrompts lang={lang} disabled={busy} onSelect={handleExample} />
+        )}
+
+        <form className="composer" onSubmit={handleSubmit}>
+          <div className="composer-inner">
+            <input
+              className="input"
+              type="text"
+              value={utterance}
+              onChange={(e) => setUtterance(e.target.value)}
+              placeholder={t("main.input_placeholder", lang)}
+              aria-label={t("main.greeting", lang)}
+              autoFocus
+              disabled={busy}
+            />
+            <button
+              type="submit"
+              className="composer-send"
+              disabled={busy || !utterance.trim()}
+              aria-label={t("main.send_button", lang)}
+            >
+              <span className="composer-send-icon" aria-hidden>
+                ▶
+              </span>
+            </button>
+          </div>
+          <div className="composer-footer">
+            <p className="composer-footer-hint">{t("guidance.safety_note", lang)}</p>
+            {canCancel && (
+              <button type="button" className="composer-cancel" onClick={() => void cancel()}>
+                {t("main.cancel", lang)}
+              </button>
+            )}
+          </div>
+        </form>
+      </GuidancePanel>
 
       <ConfirmationModal
         open={phase.kind === "awaiting_confirmation"}
@@ -89,6 +125,6 @@ export function MainScreen() {
         onAccept={() => void respondToConfirmation(true)}
         onReject={() => void respondToConfirmation(false)}
       />
-    </main>
+    </div>
   );
 }

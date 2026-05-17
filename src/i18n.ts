@@ -46,7 +46,7 @@ const ES: Record<string, string> = {
 
   "feedback.waiting_confirm": "Confirma con SÍ o NO para continuar.",
 
-  "guidance.overlay_hint": "Mira el círculo amarillo en tu pantalla — ahí debes actuar.",
+  "guidance.overlay_hint": "Mira el resaltado en pantalla — ahí debes actuar.",
 
   "guidance.overlay_missing": "Busca «{target}» en la ventana abierta.",
 
@@ -57,6 +57,10 @@ const ES: Record<string, string> = {
   "guidance.hint.type": "Escribe aquí",
   "guidance.hint.locate": "Busca aquí",
   "guidance.hud_no_target": "Busca «{target}» en la ventana que tienes abierta.",
+  "guidance.observing": "Estoy mirando tu pantalla para planear los pasos…",
+  "guidance.replanning": "Voy a buscar otra forma de ayudarte con este paso…",
+  "guidance.plan_preview_title": "Así te voy a guiar:",
+  "guidance.stuck_button": "No lo veo",
 
   "action.click": "Clic con el botón izquierdo",
 
@@ -123,7 +127,7 @@ const EN: Record<string, string> = {
 
   "feedback.waiting_confirm": "Press YES or NO to continue.",
 
-  "guidance.overlay_hint": "Look for the yellow circle on your screen — that's where to act.",
+  "guidance.overlay_hint": "Look for the highlight on your screen — that's where to act.",
 
   "guidance.overlay_missing": "Find «{target}» in the open window.",
 
@@ -134,6 +138,10 @@ const EN: Record<string, string> = {
   "guidance.hint.type": "Type here",
   "guidance.hint.locate": "Look here",
   "guidance.hud_no_target": "Find «{target}» in the window you have open.",
+  "guidance.observing": "I'm looking at your screen to plan the steps…",
+  "guidance.replanning": "I'll try another way to help you with this step…",
+  "guidance.plan_preview_title": "Here's how I'll guide you:",
+  "guidance.stuck_button": "I can't see it",
 
   "action.click": "Left-click",
 

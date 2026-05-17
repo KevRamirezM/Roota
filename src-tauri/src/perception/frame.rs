@@ -280,7 +280,19 @@ impl ScreenFrame {
         hints: &[String],
         cursor: PhysicalPoint,
     ) -> String {
+        self.ranked_visible_summary_for_target(limit, hints, cursor, "")
+    }
+
+    /// Like `ranked_visible_summary`, but marks the row matching `target_query` as OBJETIVO.
+    pub fn ranked_visible_summary_for_target(
+        &self,
+        limit: usize,
+        hints: &[String],
+        cursor: PhysicalPoint,
+        target_query: &str,
+    ) -> String {
         let limit = limit.max(1);
+        let target_q = target_query.trim().to_lowercase();
         let mut scored: Vec<(i32, &ScreenElement)> = self
             .elements
             .iter()
@@ -290,7 +302,14 @@ impl ScreenFrame {
         scored
             .into_iter()
             .take(limit)
-            .map(|(_, e)| format_element_line(e))
+            .map(|(_, e)| {
+                let line = format_element_line(e);
+                if !target_q.is_empty() && e.matches(target_query) {
+                    format!("→ OBJETIVO {line}")
+                } else {
+                    line
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }

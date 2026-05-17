@@ -15,7 +15,7 @@ network**. Roota is a calm, patient companion, not an autopilot.
 | Desktop shell | Tauri 2 |
 | Backend | Rust (edition 2021, stable) |
 | Async runtime | tokio (multi-thread) |
-| HTTP / LLM | reqwest + Ollama `qwen2.5:3b` |
+| HTTP / LLM | reqwest + Ollama `qwen3:1.7b` |
 | Windows accessibility | `uiautomation` crate (read-only) |
 | Visual overlay | Frameless click-through Tauri webview window |
 | Frontend | React 18 + TypeScript + Vite |
@@ -29,9 +29,9 @@ network**. Roota is a calm, patient companion, not an autopilot.
 - **Rust toolchain** via [rustup](https://rustup.rs/) (`rustc` 1.77+, `cargo`).
 - **Microsoft Visual Studio 2022 Build Tools** with the *Desktop development with C++* workload (required by Tauri to link the Windows binary).
 - **Node.js 18+** and **npm** (or pnpm).
-- **Ollama** running locally with `qwen2.5:3b` pulled:
+- **Ollama** running locally with `qwen3:1.7b` pulled:
   ```powershell
-  ollama pull qwen2.5:3b
+  ollama pull qwen3:1.7b
   ```
 - **WebView2 Runtime** (already shipped with Windows 10 21H2+ and Windows 11).
 
@@ -59,7 +59,7 @@ Create a `.env` next to `package.json` (gitignored) to override defaults:
 
 ```ini
 OLLAMA_HOST=http://localhost:11434
-LLM_MODEL=qwen2.5:3b
+LLM_MODEL=qwen3:1.7b
 LLM_TEMPERATURE=0.3
 LLM_MAX_TOKENS=512
 LLM_TIMEOUT_SECONDS=30

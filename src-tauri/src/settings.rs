@@ -28,12 +28,16 @@ pub struct PerceptionSettings {
     pub mode: PerceptionMode,
     /// Cap EnumWindows scanning *after* scoring (never before — see spec).
     pub max_windows: usize,
-    /// Enable vision (Moondream) fallback in hybrid mode.
+    /// Enable pixel fallback (Windows OCR) in hybrid mode.
     pub vision_enabled: bool,
+    /// Enable slow Ollama VLM (Moondream) when OCR is sparse.
+    pub vision_vlm_enabled: bool,
     /// Ollama vision model tag (e.g. moondream:1.8b).
     pub vision_model: String,
-    /// Per-vision-request timeout in seconds.
+    /// Per-vision-request timeout in seconds (Moondream cold start can exceed 8s).
     pub vision_timeout_secs: f32,
+    /// Max tokens for vision JSON responses.
+    pub vision_max_tokens: u32,
     /// Max long edge of captured bitmap before sending to the VLM.
     pub vision_max_edge: u32,
     /// When true, write debug PNG captures to temp (dev only).
@@ -54,9 +58,11 @@ impl Default for PerceptionSettings {
             mode: PerceptionMode::Hybrid,
             max_windows: 8,
             vision_enabled: true,
+            vision_vlm_enabled: false,
             vision_model: "moondream:1.8b".into(),
-            vision_timeout_secs: 8.0,
-            vision_max_edge: 768,
+            vision_timeout_secs: 45.0,
+            vision_max_tokens: 256,
+            vision_max_edge: 512,
             debug_capture: false,
             ocr_language: "es".into(),
             capture_scale: 0.75,
@@ -74,10 +80,15 @@ impl PerceptionSettings {
             mode: PerceptionMode::parse(&env_or("ROOTA_PERCEPTION_MODE", "hybrid")),
             max_windows: env_parse("ROOTA_MAX_WINDOWS", default.max_windows),
             vision_enabled: env_parse_bool("ROOTA_VISION_ENABLED", default.vision_enabled),
+            vision_vlm_enabled: env_parse_bool("ROOTA_VISION_VLM", default.vision_vlm_enabled),
             vision_model: env_or("ROOTA_VISION_MODEL", &default.vision_model),
             vision_timeout_secs: env_parse(
                 "ROOTA_VISION_TIMEOUT_SECS",
                 default.vision_timeout_secs,
+            ),
+            vision_max_tokens: env_parse(
+                "ROOTA_VISION_MAX_TOKENS",
+                default.vision_max_tokens,
             ),
             vision_max_edge: env_parse("ROOTA_VISION_MAX_EDGE", default.vision_max_edge),
             debug_capture: env_parse_bool("ROOTA_DEBUG_CAPTURE", default.debug_capture),
@@ -115,7 +126,7 @@ impl Settings {
     pub fn from_env() -> Self {
         Settings {
             ollama_host: env_or("OLLAMA_HOST", "http://localhost:11434"),
-            llm_model: env_or("LLM_MODEL", "qwen2.5:3b"),
+            llm_model: env_or("LLM_MODEL", "qwen3:1.7b"),
             llm_temperature: env_parse("LLM_TEMPERATURE", 0.3),
             llm_max_tokens: env_parse("LLM_MAX_TOKENS", 512),
             llm_timeout_seconds: env_parse("LLM_TIMEOUT_SECONDS", 30.0),
@@ -177,9 +188,11 @@ mod tests {
         assert_eq!(s.mode, PerceptionMode::Hybrid);
         assert_eq!(s.max_windows, 8);
         assert!(s.vision_enabled);
+        assert!(!s.vision_vlm_enabled);
         assert!(s.vision_model.contains("moondream"));
-        assert!((s.vision_timeout_secs - 8.0).abs() < f32::EPSILON);
-        assert_eq!(s.vision_max_edge, 768);
+        assert!((s.vision_timeout_secs - 45.0).abs() < f32::EPSILON);
+        assert_eq!(s.vision_max_tokens, 256);
+        assert_eq!(s.vision_max_edge, 512);
         assert_eq!(s.ocr_language, "es");
         assert!((s.capture_scale - 0.75).abs() < f32::EPSILON);
         assert_eq!(s.min_uia_elements, 3);

@@ -36,7 +36,47 @@ const ES: &[(&str, &str)] = &[
     ),
     (
         "guidance.overlay_hint",
-        "Mira el círculo amarillo en tu pantalla — ahí debes actuar.",
+        "Mira el resaltado en pantalla — ahí debes actuar.",
+    ),
+    (
+        "guidance.overlay_cue.click",
+        "el círculo amarillo en pantalla",
+    ),
+    (
+        "guidance.overlay_cue.double_click",
+        "el círculo naranja en pantalla",
+    ),
+    (
+        "guidance.overlay_cue.right_click",
+        "el círculo azul en pantalla",
+    ),
+    (
+        "guidance.overlay_cue.type",
+        "el recuadro verde en pantalla",
+    ),
+    (
+        "guidance.overlay_cue.locate",
+        "el resaltado en pantalla",
+    ),
+    (
+        "guidance.instruction.click_with_anchor",
+        "Haz clic en «{target}». Mira {cue}.",
+    ),
+    (
+        "guidance.instruction.double_click_with_anchor",
+        "Haz doble clic en «{target}». Mira {cue}.",
+    ),
+    (
+        "guidance.instruction.right_click_with_anchor",
+        "Haz clic derecho en «{target}». Mira {cue}.",
+    ),
+    (
+        "guidance.instruction.type_with_anchor",
+        "Escribe en «{target}». Mira {cue}.",
+    ),
+    (
+        "guidance.instruction.locate_with_anchor",
+        "Busca «{target}» en la ventana. Mira {cue}.",
     ),
     (
         "guidance.overlay_missing",
@@ -98,6 +138,26 @@ const ES: &[(&str, &str)] = &[
     (
         "guidance.perception_failed",
         "No pude ver tu escritorio. Abre el Explorador de archivos, espera un momento y vuelve a pedirme ayuda.",
+    ),
+    (
+        "guidance.observing",
+        "Estoy mirando tu pantalla para planear los pasos…",
+    ),
+    (
+        "guidance.replanning",
+        "Voy a buscar otra forma de ayudarte con este paso…",
+    ),
+    (
+        "guidance.plan_preview_title",
+        "Así te voy a guiar:",
+    ),
+    (
+        "guidance.plan_partial",
+        "Algunos pasos pueden cambiar cuando vea más de tu pantalla.",
+    ),
+    (
+        "guidance.stuck_button",
+        "No lo veo",
     ),
     (
         "guidance.perception_limited",
@@ -169,6 +229,10 @@ const ES: &[(&str, &str)] = &[
     ("confirm.reply_message", "responder el correo de {target}"),
     ("confirm.open_word_document", "abrir un documento de Word"),
     ("confirm.print_document", "imprimir el documento"),
+    (
+        "confirm.windows_task",
+        "ayudarte con esto en tu PC: {target}",
+    ),
 ];
 
 const EN: &[(&str, &str)] = &[
@@ -196,7 +260,47 @@ const EN: &[(&str, &str)] = &[
     ("feedback.waiting_confirm", "Press YES or NO to continue."),
     (
         "guidance.overlay_hint",
-        "Look for the yellow circle on your screen — that's where to act.",
+        "Look for the highlight on your screen — that's where to act.",
+    ),
+    (
+        "guidance.overlay_cue.click",
+        "the yellow circle on screen",
+    ),
+    (
+        "guidance.overlay_cue.double_click",
+        "the orange circle on screen",
+    ),
+    (
+        "guidance.overlay_cue.right_click",
+        "the blue circle on screen",
+    ),
+    (
+        "guidance.overlay_cue.type",
+        "the green highlight on screen",
+    ),
+    (
+        "guidance.overlay_cue.locate",
+        "the highlight on screen",
+    ),
+    (
+        "guidance.instruction.click_with_anchor",
+        "Click «{target}». Look at {cue}.",
+    ),
+    (
+        "guidance.instruction.double_click_with_anchor",
+        "Double-click «{target}». Look at {cue}.",
+    ),
+    (
+        "guidance.instruction.right_click_with_anchor",
+        "Right-click «{target}». Look at {cue}.",
+    ),
+    (
+        "guidance.instruction.type_with_anchor",
+        "Type in «{target}». Look at {cue}.",
+    ),
+    (
+        "guidance.instruction.locate_with_anchor",
+        "Find «{target}» in the window. Look at {cue}.",
     ),
     (
         "guidance.overlay_missing",
@@ -320,6 +424,10 @@ const EN: &[(&str, &str)] = &[
     ("confirm.reply_message", "reply to {target}'s message"),
     ("confirm.open_word_document", "open a Word document"),
     ("confirm.print_document", "print the document"),
+    (
+        "confirm.windows_task",
+        "help you with this on your PC: {target}",
+    ),
 ];
 
 fn lookup(catalog: &'static [(&'static str, &'static str)], key: &str) -> Option<&'static str> {

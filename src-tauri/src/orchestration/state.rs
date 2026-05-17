@@ -58,6 +58,9 @@ pub struct SessionState {
     pub total_steps: usize,
     pub completed: bool,
     pub history: Vec<GuideStep>,
+    pub replan_count: u32,
+    /// Corrections issued for the current step (triggers replan at 2).
+    pub corrections_this_step: u32,
 }
 
 impl SessionState {
@@ -68,6 +71,21 @@ impl SessionState {
         self.total_steps = total_steps;
         self.completed = false;
         self.history.clear();
+        self.replan_count = 0;
+        self.corrections_this_step = 0;
+    }
+
+    pub fn can_replan(&self) -> bool {
+        self.replan_count < crate::orchestration::replan::MAX_REPLANS_PER_SESSION
+    }
+
+    pub fn record_replan(&mut self) {
+        self.replan_count += 1;
+        self.corrections_this_step = 0;
+    }
+
+    pub fn advance_step_cursor(&mut self) {
+        self.corrections_this_step = 0;
     }
 
     /// Records a delivered step. `step_index` stays the 0-based blueprint cursor
@@ -79,6 +97,7 @@ impl SessionState {
     /// Marks the current blueprint step done and advances the cursor.
     pub fn advance(&mut self) {
         self.step_index += 1;
+        self.corrections_this_step = 0;
         if self.step_index >= self.total_steps {
             self.completed = true;
         }

@@ -1,21 +1,13 @@
-Tu tarea: clasifica la siguiente petición en UNA intención y un objetivo.
+Tu tarea: clasifica la petición en UNA intención y un objetivo.
 
-Responde SOLO con JSON válido y nada más, con esta forma exacta:
+Responde SOLO con JSON válido:
 {"intent": "<one_of>", "target": "<text>", "params": {}}
 
 Intenciones permitidas:
-- open_folder
-- move_file
-- delete_file
-- open_browser
-- search_web
-- open_url
-- compose_email
-- read_inbox
-- reply_message
-- open_word_document
-- print_document
-- unknown
+{allowed_intents}
+
+Usa "windows_task" para CUALQUIER otra tarea de escritorio Windows (ajustes, volumen, fotos, Bluetooth, cerrar ventana, etc.).
+Usa "unknown" solo si la petición está vacía o no es una tarea de PC.
 
 Ejemplos:
 Petición: "Abre la carpeta de Descargas"
@@ -24,8 +16,17 @@ Respuesta: {"intent": "open_folder", "target": "Descargas", "params": {}}
 Petición: "Quiero escribir un correo para mi hija Elena"
 Respuesta: {"intent": "compose_email", "target": "Elena", "params": {}}
 
-Petición: "Búscame el pronóstico del clima"
-Respuesta: {"intent": "search_web", "target": "pronóstico del clima", "params": {}}
+Petición: "Abre la configuración de Windows"
+Respuesta: {"intent": "windows_task", "target": "configuración de Windows", "params": {}}
+
+Petición: "Sube el volumen"
+Respuesta: {"intent": "windows_task", "target": "volumen", "params": {}}
+
+Petición: "¿Cómo abro una terminal en Cursor?"
+Respuesta: {"intent": "windows_task", "target": "Terminal", "params": {}}
+
+Petición: "Abre la configuración de Windows"
+Respuesta: {"intent": "windows_task", "target": "Configuración", "params": {}}
 
 Petición: "{utterance}"
 Respuesta:

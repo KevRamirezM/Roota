@@ -41,12 +41,34 @@ impl MoondreamVisionPerceiver {
                 "Moondream model not found in Ollama — vision fallback disabled"
             );
         }
-        Self {
+        let slf = Self {
             client,
             max_edge: settings.perception.vision_max_edge,
             debug_capture: settings.perception.debug_capture,
             available,
+        };
+        if available {
+            let client = slf.client.clone();
+            std::thread::Builder::new()
+                .name("roota-vision-warmup".into())
+                .spawn(move || {
+                    let started = std::time::Instant::now();
+                    match client.warmup_vision_blocking() {
+                        Ok(()) => tracing::info!(
+                            target: "roota.perception.vision",
+                            ms = started.elapsed().as_millis(),
+                            "moondream warmup complete"
+                        ),
+                        Err(err) => tracing::warn!(
+                            target: "roota.perception.vision",
+                            ms = started.elapsed().as_millis(),
+                            "moondream warmup failed: {err}"
+                        ),
+                    }
+                })
+                .ok();
         }
+        slf
     }
 }
 
@@ -99,6 +121,15 @@ impl VisionPerceiver for MoondreamVisionPerceiver {
         let prompt = VISION_DETECT_PROMPT
             .replace("{width}", &bitmap.width.to_string())
             .replace("{height}", &bitmap.height.to_string());
+
+        tracing::debug!(
+            target: "roota.perception.vision",
+            w = bitmap.width,
+            h = bitmap.height,
+            png_kb = png.len() / 1024,
+            timeout_secs = self.client.timeout_secs(),
+            "moondream inference starting"
+        );
 
         let started = std::time::Instant::now();
         let json = self

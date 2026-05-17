@@ -6,6 +6,7 @@
 //! file change: implement `VisionPerceiver` and pass it to `HybridPerceiver`.
 
 pub mod capture;
+pub mod layered;
 pub mod moondream;
 pub mod ocr_windows;
 
@@ -61,11 +62,30 @@ impl VisionPerceiver for NoopVisionPerceiver {
     }
 }
 
-/// Build the platform default vision perceiver (Moondream when enabled).
+/// Build the platform default vision perceiver (Windows OCR; optional Moondream VLM).
 pub fn default_vision_perceiver(settings: &crate::settings::Settings) -> Box<dyn VisionPerceiver> {
-    if settings.perception.vision_enabled {
-        Box::new(moondream::MoondreamVisionPerceiver::new(settings))
-    } else {
-        Box::new(NoopVisionPerceiver)
+    if !settings.perception.vision_enabled {
+        return Box::new(NoopVisionPerceiver);
+    }
+
+    #[cfg(windows)]
+    {
+        let ocr: Box<dyn VisionPerceiver> =
+            Box::new(ocr_windows::WindowsOcrPerceiver::new(&settings.perception));
+        if settings.perception.vision_vlm_enabled {
+            let vlm: Box<dyn VisionPerceiver> =
+                Box::new(moondream::MoondreamVisionPerceiver::new(settings));
+            return Box::new(layered::LayeredVisionPerceiver::new(ocr, Some(vlm)));
+        }
+        return ocr;
+    }
+
+    #[cfg(not(windows))]
+    {
+        if settings.perception.vision_vlm_enabled {
+            Box::new(moondream::MoondreamVisionPerceiver::new(settings))
+        } else {
+            Box::new(NoopVisionPerceiver)
+        }
     }
 }

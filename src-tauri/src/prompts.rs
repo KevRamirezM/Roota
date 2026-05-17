@@ -3,20 +3,59 @@
 pub const SYSTEM_PROMPT: &str = include_str!("../prompts/system_prompt.txt");
 pub const INTENT_CLASSIFIER: &str = include_str!("../prompts/intent_classifier.txt");
 pub const INSTRUCTION_STEP: &str = include_str!("../prompts/instruction_step.txt");
+pub const TASK_PLANNER: &str = include_str!("../prompts/task_planner.txt");
+pub const TASK_BRIEF: &str = include_str!("../prompts/task_brief.txt");
 
-pub fn render_intent_classifier(utterance: &str) -> String {
-    INTENT_CLASSIFIER.replace("{utterance}", utterance)
+pub fn render_intent_classifier(utterance: &str, allowed_intents: &[String]) -> String {
+    let mut lines: Vec<String> = allowed_intents
+        .iter()
+        .map(|i| format!("- {i}"))
+        .collect();
+    if !lines.iter().any(|l| l.contains("windows_task")) {
+        lines.push("- windows_task".into());
+    }
+    if !lines.iter().any(|l| l.contains("unknown")) {
+        lines.push("- unknown".into());
+    }
+    INTENT_CLASSIFIER
+        .replace("{allowed_intents}", &lines.join("\n"))
+        .replace("{utterance}", utterance)
+}
+
+pub fn render_task_brief(utterance: &str, goal_target: &str) -> String {
+    TASK_BRIEF
+        .replace("{utterance}", utterance)
+        .replace("{goal_target}", goal_target)
+}
+
+pub struct TaskPlannerContext<'a> {
+    pub utterance: &'a str,
+    pub goal_target: &'a str,
+    pub task_brief_block: &'a str,
+    pub window_list: &'a str,
+    pub visible_elements: &'a str,
+}
+
+pub fn render_task_planner(ctx: TaskPlannerContext<'_>) -> String {
+    TASK_PLANNER
+        .replace("{utterance}", ctx.utterance)
+        .replace("{goal_target}", ctx.goal_target)
+        .replace("{task_brief_block}", ctx.task_brief_block)
+        .replace("{window_list}", ctx.window_list)
+        .replace("{visible_elements}", ctx.visible_elements)
 }
 
 pub struct InstructionPromptContext<'a> {
-    pub goal: &'a str,
+    pub goal_summary: &'a str,
     pub step_index: usize,
     pub total_steps: usize,
-    pub action: &'a str,
+    pub click_hint: &'a str,
+    pub overlay_cue: &'a str,
     pub target: &'a str,
     pub window_title: &'a str,
     pub window_list: &'a str,
     pub visible_elements: &'a str,
+    pub spatial_hint: &'a str,
     pub cursor_line: &'a str,
     pub target_on_screen: bool,
     pub perception_quality: &'a str,
@@ -26,19 +65,21 @@ pub struct InstructionPromptContext<'a> {
 
 pub fn render_instruction_step(ctx: InstructionPromptContext<'_>) -> String {
     let anchor_status = if ctx.target_on_screen {
-        "El sistema SÍ localizó el objetivo en pantalla; la persona verá un círculo amarillo ahí."
+        "Estado: el resaltado en pantalla ya marca el objetivo; tu frase debe coincidir con ese lugar."
     } else {
-        "El sistema NO localizó el objetivo todavía; guía con palabras hasta que lo encuentre."
+        "Estado: aún no hay resaltado; guía con palabras hasta que aparezca."
     };
     INSTRUCTION_STEP
-        .replace("{goal}", ctx.goal)
+        .replace("{goal_summary}", ctx.goal_summary)
         .replace("{step_index}", &ctx.step_index.to_string())
         .replace("{total_steps}", &ctx.total_steps.to_string())
-        .replace("{action}", ctx.action)
+        .replace("{click_hint}", ctx.click_hint)
+        .replace("{overlay_cue}", ctx.overlay_cue)
         .replace("{target}", ctx.target)
         .replace("{window_title}", ctx.window_title)
         .replace("{window_list}", ctx.window_list)
         .replace("{visible_elements}", ctx.visible_elements)
+        .replace("{spatial_hint}", ctx.spatial_hint)
         .replace("{cursor_line}", ctx.cursor_line)
         .replace("{anchor_status}", anchor_status)
         .replace("{perception_quality}", ctx.perception_quality)
@@ -53,14 +94,16 @@ mod tests {
     #[test]
     fn render_replaces_all_placeholders() {
         let out = render_instruction_step(InstructionPromptContext {
-            goal: "open_folder",
+            goal_summary: "abrir la carpeta Descargas",
             step_index: 1,
             total_steps: 2,
-            action: "Doble clic",
+            click_hint: "Doble clic aquí",
+            overlay_cue: "el círculo naranja en pantalla",
             target: "Descargas",
             window_title: "Explorer",
             window_list: "* Explorer\n  Chrome",
-            visible_elements: "- Descargas (Button)",
+            visible_elements: "→ OBJETIVO - Descargas (Button)",
+            spatial_hint: "«Descargas» en Explorer",
             cursor_line: "Pos: (10, 20)",
             target_on_screen: true,
             perception_quality: "full",
@@ -69,7 +112,8 @@ mod tests {
         });
         assert!(out.contains("Descargas"));
         assert!(out.contains("full"));
-        assert!(out.contains("Doble clic"));
+        assert!(out.contains("Doble clic aquí"));
+        assert!(out.contains("círculo naranja"));
         assert!(!out.contains("{target}"));
         assert!(!out.contains("{warnings_line}"));
     }

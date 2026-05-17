@@ -75,6 +75,7 @@ pub fn run() {
             commands::start_session,
             commands::confirm_response,
             commands::cancel_session,
+            commands::request_stuck_help,
             commands::show_overlay_anchor,
             commands::clear_overlay,
             commands::toggle_panel,
@@ -106,10 +107,16 @@ pub fn run() {
                 settings: settings.clone(),
             });
 
-            if let Some(overlay) = app.get_webview_window("overlay") {
-                let _ = overlay.set_ignore_cursor_events(true);
+            {
                 use tauri::window::Color;
-                let _ = overlay.set_background_color(Some(Color(0, 0, 0, 0)));
+                let clear = Some(Color(0, 0, 0, 0));
+                if let Some(overlay) = app.get_webview_window("overlay") {
+                    let _ = overlay.set_ignore_cursor_events(true);
+                    let _ = overlay.set_background_color(clear);
+                }
+                if let Some(panel) = app.get_webview_window(shell::panel::PANEL_LABEL) {
+                    let _ = panel.set_background_color(clear);
+                }
             }
 
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -117,7 +124,7 @@ pub fn run() {
                 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
                 if let Some(panel) = app.get_webview_window(shell::panel::PANEL_LABEL) {
-                    let _ = shell::panel::position_bottom_right(&panel);
+                    let _ = shell::panel::position_top_center(&panel);
                     let _ = panel.set_always_on_top(true);
                     let _ = shell::panel::hide(app.handle());
                 }

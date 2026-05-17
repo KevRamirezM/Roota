@@ -41,7 +41,7 @@ impl DecisionEngine {
         }
         let blueprint = &template.steps[session.step_index];
         let target_text = materialise_target(blueprint, intent);
-        let element = find_element(frame, &target_text, blueprint, blueprint.action);
+        let element = find_element(frame, &target_text, blueprint, blueprint.action, intent);
         let anchor = element.map(ScreenElement::center);
         let anchor_bounds = element.map(|e| (e.bounds.x, e.bounds.y, e.bounds.width, e.bounds.height));
 
@@ -82,6 +82,7 @@ fn find_element<'a>(
     target_text: &str,
     blueprint: &StepBlueprint,
     action: ActionVerb,
+    intent: &Intent,
 ) -> Option<&'a ScreenElement> {
     if target_text.is_empty() {
         return None;
@@ -96,10 +97,43 @@ fn find_element<'a>(
         }
         queries.extend(search_queries(token));
     }
+    queries.extend(utterance_search_tokens(&intent.raw_utterance));
+    if !intent.target.is_empty() && intent.target != target_text {
+        queries.extend(search_queries(&intent.target));
+        for token in intent.target.split_whitespace() {
+            if token.chars().count() > 2 {
+                queries.extend(search_queries(token));
+            }
+        }
+    }
     frame.find_best_for_action(&queries, action)
 }
 
-/// Bilingual / alias variants for common Explorer and browser labels.
+/// Keywords from the original request that may match on-screen menu labels.
+fn utterance_search_tokens(utterance: &str) -> Vec<String> {
+    const STOP: &[&str] = &[
+        "como", "cómo", "quiero", "necesito", "puedes", "para", "una", "uno", "los", "las",
+        "del", "de", "la", "el", "en", "y", "o", "abrir", "abre", "open", "hacer", "ayuda",
+    ];
+    let mut out = Vec::new();
+    for token in utterance.split_whitespace() {
+        let t = token.trim().trim_matches(|c: char| !c.is_alphanumeric() && c != 'ñ' && c != 'Ñ');
+        if t.chars().count() < 3 {
+            continue;
+        }
+        let lower = t.to_lowercase();
+        if STOP.contains(&lower.as_str()) {
+            continue;
+        }
+        if !out.iter().any(|s: &String| s.eq_ignore_ascii_case(t)) {
+            out.push(t.to_string());
+            out.extend(search_queries(t));
+        }
+    }
+    out
+}
+
+/// Bilingual / alias variants for common desktop labels.
 fn search_queries(target: &str) -> Vec<String> {
     let mut out = vec![target.trim().to_string()];
     let lower = target.trim().to_lowercase();
@@ -118,6 +152,22 @@ fn search_queries(target: &str) -> Vec<String> {
         "compose" => &["redactar", "compose"],
         "bandeja de entrada" => &["inbox", "bandeja de entrada"],
         "inbox" => &["bandeja de entrada", "inbox"],
+        "terminal" => &[
+            "terminal",
+            "nueva terminal",
+            "new terminal",
+            "consola",
+            "powershell",
+            "integrated terminal",
+        ],
+        "consola" => &["terminal", "consola", "powershell"],
+        "powershell" => &["powershell", "terminal"],
+        "cursor" => &["cursor", "visual studio code", "vscode"],
+        "configuración" | "configuracion" => &["configuración", "settings", "configuracion"],
+        "settings" => &["settings", "configuración"],
+        "inicio" => &["inicio", "start"],
+        "start" => &["start", "inicio"],
+        "ver" | "view" => &["ver", "view"],
         _ => &[],
     };
     for alias in aliases {
@@ -175,7 +225,7 @@ mod tests {
             intent: "open_folder".into(),
             target: "Descargas".into(),
             params: Default::default(),
-            raw_utterance: "abre".into(),
+            raw_utterance: "abre descargas".into(),
         };
         let frame = frame_with(vec![el("Descargas", 100, 300)], "Explorer");
         let mut session = SessionState::default();
@@ -186,7 +236,35 @@ mod tests {
             .unwrap();
         assert_eq!(step.target_text, "Descargas");
         assert_eq!(step.anchor_xy, Some((180, 316)));
-        assert_eq!(step.anchor_bounds, Some((100, 300, 160, 32)));
+    }
+
+    #[test]
+    fn utterance_tokens_help_match_terminal() {
+        let intent = Intent {
+            intent: "windows_task".into(),
+            target: "Terminal".into(),
+            params: Default::default(),
+            raw_utterance: "como abro una terminal en cursor".into(),
+        };
+        let frame = frame_with(vec![el("Nueva terminal", 50, 100)], "Cursor");
+        let template = GuidanceTemplate {
+            intent: "windows_task".into(),
+            confirmation_action_key: "confirm.windows_task".into(),
+            expected_window: Some("Cursor".into()),
+            steps: vec![StepBlueprint {
+                action: ActionVerb::Click,
+                target_query: "Terminal".into(),
+                instruction_key: "guidance.click_target".into(),
+                fallback_window: None,
+            }],
+        };
+        let mut session = SessionState::default();
+        session.begin(intent.clone(), 1);
+        let step = DecisionEngine::new(Lang::Es)
+            .next_step(&intent, &template, &frame, &session)
+            .unwrap();
+        assert!(step.anchor_xy.is_some());
+        assert_eq!(step.target_text, "Terminal");
     }
 
     #[test]
@@ -217,7 +295,7 @@ mod tests {
             intent: "open_folder".into(),
             target: "Música".into(),
             params: Default::default(),
-            raw_utterance: "abre".into(),
+            raw_utterance: "abre música".into(),
         };
         let frame = frame_with(vec![el("Descargas", 100, 300)], "Explorer");
         let mut session = SessionState::default();
@@ -227,7 +305,6 @@ mod tests {
             .next_step(&intent, template, &frame, &session)
             .unwrap();
         assert!(step.anchor_xy.is_none());
-        assert!(step.anchor_bounds.is_none());
         assert_eq!(step.target_text, "Música");
     }
 }

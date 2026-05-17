@@ -1,0 +1,6 @@
+{
+  "open_downloads": [
+    { "action": "locate", "target_query": "Explorador de archivos" },
+    { "action": "double_click", "target_query": "Descargas" }
+  ]
+}

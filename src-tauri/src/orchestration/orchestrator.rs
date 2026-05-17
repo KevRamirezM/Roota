@@ -20,14 +20,22 @@ use crate::llm::LlmClient;
 use crate::orchestration::action_feedback;
 use crate::orchestration::decision::DecisionEngine;
 use crate::orchestration::detector::StateDetector;
+use crate::orchestration::guidance_copy::{
+    self, accept_llm_instruction, canonical_instruction, click_hint, goal_summary,
+    spatial_hint, target_element, visible_elements_for_prompt,
+};
+use crate::orchestration::brief::{BriefExtractor, TaskBrief};
 use crate::orchestration::intent::IntentRecognizer;
+use crate::orchestration::plan::{PlanSource, PlanValidator, TaskPlan};
+use crate::orchestration::planner::TaskPlanner;
+use crate::orchestration::replan::{ReplanEngine, ReplanReason};
 use crate::orchestration::state::{ActionVerb, GuideStep, Intent, SessionState};
 use crate::orchestration::templates::GuidanceTemplate;
 use crate::orchestration::templates::TemplateRegistry;
 use crate::perception::{
     cache::{FrameCache, InvalidateReason},
     frame::now_ms,
-    PerceptionContext, PerceptionError, PerceptionQuality, Perceiver, ScreenFrame,
+    PerceptionContext, PerceptionError, Perceiver, ScreenFrame,
 };
 use crate::prompts::{self, InstructionPromptContext};
 use crate::settings::{Lang, Settings};
@@ -40,13 +48,27 @@ const INPUT_POLL_MS: u64 = 80;
 const PERCEPTION_EVERY_N_POLLS: u32 = 5;
 const GUIDE_MAX_POLLS: u32 = 150;
 const POST_CONFIRM_MS: u64 = 400;
-const STEP_LLM_TIMEOUT_SECS: f32 = 4.0;
+const STEP_LLM_TIMEOUT_SECS: f32 = 8.0;
 const FRAME_CACHE_TTL_MS: u64 = 450;
+const MAX_CORRECTIONS_BEFORE_REPLAN: u32 = 2;
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PlanStepSummary {
+    pub index: usize,
+    pub action: ActionVerb,
+    pub target: String,
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", content = "data")]
 pub enum OrchestratorEvent {
     ConfirmationRequested { message: String },
+    Observing { pass: u8 },
+    PlanPreview {
+        summary: String,
+        steps: Vec<PlanStepSummary>,
+    },
+    Replanning { reason: String },
     StepReady { step: GuideStep },
     StepCompleted { index: usize },
     AnchorChanged { x: i32, y: i32, label: String },
@@ -65,10 +87,14 @@ pub struct Orchestrator {
     perceiver: Arc<dyn Perceiver>,
     templates: Arc<TemplateRegistry>,
     recognizer: IntentRecognizer,
+    brief_extractor: BriefExtractor,
+    planner: TaskPlanner,
+    replan_engine: ReplanEngine,
     decision: DecisionEngine,
     detector: StateDetector,
     pending_confirmation: Mutex<Option<oneshot::Sender<bool>>>,
     cancelled: AtomicBool,
+    stuck_requested: AtomicBool,
     lang: Lang,
     settings: Settings,
 }
@@ -87,22 +113,35 @@ impl Orchestrator {
             lang,
             settings.llm_intent_timeout_seconds,
         );
+        let planner = TaskPlanner::new(llm.clone());
+        let brief_extractor = BriefExtractor::new(llm.clone());
+        let replan_engine = ReplanEngine::new(llm.clone());
         Self {
             llm,
             perceiver,
             templates,
             recognizer,
+            brief_extractor,
+            planner,
+            replan_engine,
             decision: DecisionEngine::new(lang),
             detector: StateDetector,
             pending_confirmation: Mutex::new(None),
             cancelled: AtomicBool::new(false),
+            stuck_requested: AtomicBool::new(false),
             lang,
             settings,
         }
     }
 
+    /// User tapped "No lo veo" — guide loop will replan on next poll.
+    pub fn request_stuck_help(&self) {
+        self.stuck_requested.store(true, Ordering::Relaxed);
+    }
+
     pub async fn cancel(&self) {
         self.cancelled.store(true, Ordering::Relaxed);
+        self.stuck_requested.store(false, Ordering::Relaxed);
         let mut guard = self.pending_confirmation.lock().await;
         if let Some(tx) = guard.take() {
             let _ = tx.send(false);
@@ -118,28 +157,44 @@ impl Orchestrator {
 
     pub async fn run<S: EventSink + ?Sized>(self: Arc<Self>, utterance: String, sink: Arc<S>) {
         self.cancelled.store(false, Ordering::Relaxed);
+        self.stuck_requested.store(false, Ordering::Relaxed);
         let intent = self.recognizer.recognise(&utterance).await;
-        let template = match self.templates.get(&intent.intent) {
-            Some(t) if intent.is_known() => t.clone(),
-            _ => {
-                sink.send(OrchestratorEvent::Error {
-                    message: i18n::t("intent.unknown", self.lang, &[]),
-                })
-                .await;
-                sink.send(OrchestratorEvent::Finished).await;
-                return;
-            }
+        let template_key = self.resolve_template_key(&intent);
+        if template_key == "unknown" {
+            sink.send(OrchestratorEvent::Error {
+                message: i18n::t("intent.unknown", self.lang, &[]),
+            })
+            .await;
+            sink.send(OrchestratorEvent::Finished).await;
+            return;
+        }
+
+        let template = self.templates.get(&template_key).unwrap().clone();
+        let is_dynamic = template_key == "windows_task";
+
+        let target_label = if !intent.target.is_empty() {
+            intent.target.clone()
+        } else if is_dynamic {
+            intent.raw_utterance.chars().take(72).collect()
+        } else {
+            i18n::t("intent.no_target", self.lang, &[])
         };
 
-        let target_label = if intent.target.is_empty() {
-            i18n::t("intent.no_target", self.lang, &[])
-        } else {
-            intent.target.clone()
-        };
+        let task_brief = self
+            .brief_extractor
+            .understand(&intent.raw_utterance, &target_label)
+            .await;
+        tracing::info!(
+            target: "roota.brief",
+            summary = %task_brief.goal_summary,
+            apps = ?task_brief.app_hints,
+            "task brief ready"
+        );
+
         let confirmation_message = i18n::t(
             &template.confirmation_action_key,
             self.lang,
-            &[("target", &target_label)],
+            &[("target", &task_brief.goal_summary)],
         );
 
         let (tx, rx) = oneshot::channel();
@@ -160,14 +215,58 @@ impl Orchestrator {
 
         tokio::time::sleep(Duration::from_millis(POST_CONFIRM_MS)).await;
 
-        let scan_ctx = ScanContext::from_expected_window(template.expected_window.as_deref());
+        let mut template = template;
+        let mut scan_ctx =
+            ScanContext::from_expected_window(template.expected_window.as_deref());
+        task_brief.enrich_scan_context(&mut scan_ctx);
+
+        if is_dynamic {
+            match self
+                .observe_and_plan(sink.as_ref(), &task_brief, &scan_ctx, &intent)
+                .await
+            {
+                Ok((plan, partial)) => {
+                    template = plan.to_guidance_template("windows_task", "confirm.windows_task");
+                    self.emit_plan_preview(sink.as_ref(), &plan).await;
+                    if partial {
+                        tracing::info!(target: "roota.orchestrator", "plan partially grounded");
+                    }
+                    tracing::info!(
+                        target: "roota.orchestrator",
+                        steps = template.steps.len(),
+                        "dynamic plan ready"
+                    );
+                }
+                Err(msg) => {
+                    sink.send(OrchestratorEvent::Error { message: msg }).await;
+                    sink.send(OrchestratorEvent::Finished).await;
+                    return;
+                }
+            }
+            if template.steps.is_empty() {
+                sink.send(OrchestratorEvent::Error {
+                    message: i18n::t("intent.unknown", self.lang, &[]),
+                })
+                .await;
+                sink.send(OrchestratorEvent::Finished).await;
+                return;
+            }
+        }
 
         let mut session = SessionState::default();
         session.begin(intent.clone(), template.steps.len());
+        let mut task_brief = task_brief;
 
         while !session.completed && !self.cancelled.load(Ordering::Relaxed) {
             let Some((frame_before, mut step)) = self
-                .wait_for_target(sink.as_ref(), &intent, &template, &scan_ctx, &session)
+                .wait_for_target(
+                    sink.as_ref(),
+                    &intent,
+                    &mut template,
+                    &scan_ctx,
+                    &mut session,
+                    &mut task_brief,
+                )
                 .await
             else {
                 sink.send(OrchestratorEvent::Error {
@@ -182,6 +281,8 @@ impl Orchestrator {
             let frame_cache = FrameCache::with_ttl(FRAME_CACHE_TTL_MS);
             frame_cache.put(frame_before.clone());
 
+            let has_anchor = step.anchor_xy.is_some();
+            let use_llm_phrasing = template.intent != "windows_task" || has_anchor;
             step.instruction = self
                 .instruction_for_step(
                     &step,
@@ -190,7 +291,7 @@ impl Orchestrator {
                     &template,
                     &scan_ctx,
                     &input_monitor.poll(),
-                    true,
+                    use_llm_phrasing,
                 )
                 .await;
 
@@ -202,12 +303,30 @@ impl Orchestrator {
             let mut rolling_frame = frame_before.clone();
             let mut polls_since_capture: u32 = 0;
             let mut target_click_count: u32 = 0;
+            session.advance_step_cursor();
 
             for poll in 0..GUIDE_MAX_POLLS {
                 if self.cancelled.load(Ordering::Relaxed) {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(INPUT_POLL_MS)).await;
+
+                if self.stuck_requested.swap(false, Ordering::Relaxed) {
+                    if self
+                        .try_replan(
+                            sink.as_ref(),
+                            &mut template,
+                            &mut session,
+                            &task_brief,
+                            &scan_ctx,
+                            &rolling_frame,
+                            ReplanReason::UserAskedHelp,
+                        )
+                        .await
+                    {
+                        break;
+                    }
+                }
 
                 let input = input_monitor.poll();
 
@@ -294,6 +413,24 @@ impl Orchestrator {
                         );
                         step.instruction = correction;
                         self.emit_step(sink.as_ref(), &step).await;
+                        session.corrections_this_step += 1;
+                        let correction_count = session.corrections_this_step;
+                        if correction_count >= MAX_CORRECTIONS_BEFORE_REPLAN && session.can_replan() {
+                            let _ = self
+                                .try_replan(
+                                    sink.as_ref(),
+                                    &mut template,
+                                    &mut session,
+                                    &task_brief,
+                                    &scan_ctx,
+                                    &frame_after,
+                                    ReplanReason::WrongClick {
+                                        count: correction_count,
+                                    },
+                                )
+                                .await;
+                            break;
+                        }
                     }
                 }
 
@@ -361,56 +498,200 @@ impl Orchestrator {
         sink.send(OrchestratorEvent::Finished).await;
     }
 
+    /// OBSERVE → PLAN (with optional second capture).
+    async fn observe_and_plan<S: EventSink + ?Sized>(
+        &self,
+        sink: &S,
+        brief: &TaskBrief,
+        scan_ctx: &ScanContext,
+        _intent: &Intent,
+    ) -> Result<(TaskPlan, bool), String> {
+        sink.send(OrchestratorEvent::Observing { pass: 1 }).await;
+        let mut input_monitor = InputMonitor::new();
+        let cursor = input_monitor.poll().cursor;
+        let frame = self
+            .capture_frame(scan_ctx, cursor)
+            .await
+            .map_err(|_| i18n::t("guidance.perception_failed", self.lang, &[]))?;
+
+        let mut plan = self
+            .planner
+            .plan_from_brief(brief, &frame, scan_ctx, &self.settings.perception)
+            .await;
+        let mut report = PlanValidator::new().validate(&plan, &frame);
+        let mut partial = report.needs_reobserve;
+
+        if report.needs_reobserve {
+            sink.send(OrchestratorEvent::Observing { pass: 2 }).await;
+            let cursor = input_monitor.poll().cursor;
+            if let Ok(frame2) = self.capture_frame(scan_ctx, cursor).await {
+                plan = self
+                    .planner
+                    .plan_from_brief(brief, &frame2, scan_ctx, &self.settings.perception)
+                    .await;
+                report = PlanValidator::new().validate(&plan, &frame2);
+                partial = report.needs_reobserve;
+            }
+        }
+
+        if plan.steps.is_empty() {
+            plan = TaskPlan {
+                steps: crate::orchestration::planner::heuristic_plan(
+                    &brief.raw_utterance,
+                    &brief.goal_summary,
+                    Some(&frame),
+                )
+                .steps,
+                brief: brief.clone(),
+                expected_window: plan.expected_window,
+                source: PlanSource::Heuristic,
+            };
+        }
+
+        if plan.steps.is_empty() {
+            return Err(i18n::t("intent.unknown", self.lang, &[]));
+        }
+
+        Ok((plan, partial))
+    }
+
+    async fn emit_plan_preview<S: EventSink + ?Sized>(&self, sink: &S, plan: &TaskPlan) {
+        let steps: Vec<PlanStepSummary> = plan
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(i, s)| PlanStepSummary {
+                index: i + 1,
+                action: s.action,
+                target: s.target_query.clone(),
+            })
+            .collect();
+        sink.send(OrchestratorEvent::PlanPreview {
+            summary: plan.brief.goal_summary.clone(),
+            steps,
+        })
+        .await;
+    }
+
+    async fn try_replan<S: EventSink + ?Sized>(
+        &self,
+        sink: &S,
+        template: &mut GuidanceTemplate,
+        session: &mut SessionState,
+        brief: &TaskBrief,
+        scan_ctx: &ScanContext,
+        frame: &ScreenFrame,
+        reason: ReplanReason,
+    ) -> bool {
+        if !session.can_replan() {
+            return false;
+        }
+        sink.send(OrchestratorEvent::Replanning {
+            reason: reason.label().into(),
+        })
+        .await;
+
+        let new_plan = self
+            .replan_engine
+            .replan(
+                brief,
+                frame,
+                scan_ctx,
+                &self.settings.perception,
+                &template.steps,
+                session.step_index,
+                &reason,
+            )
+            .await;
+
+        if new_plan.steps.is_empty() {
+            return false;
+        }
+
+        ReplanEngine::apply_replan(template, &new_plan, session.step_index);
+        session.total_steps = template.steps.len();
+        session.record_replan();
+        self.emit_plan_preview(sink, &new_plan).await;
+        true
+    }
+
     /// Perception gate: scan until target has coordinates, emitting prep overlay meanwhile.
     async fn wait_for_target<S: EventSink + ?Sized>(
         &self,
         sink: &S,
         intent: &Intent,
-        template: &GuidanceTemplate,
+        template: &mut GuidanceTemplate,
         scan_ctx: &ScanContext,
-        session: &SessionState,
+        session: &mut SessionState,
+        brief: &mut TaskBrief,
     ) -> Option<(ScreenFrame, GuideStep)> {
         let mut input_monitor = InputMonitor::new();
-        for attempt in 0..PERCEPTION_MAX_ATTEMPTS {
-            if self.cancelled.load(Ordering::Relaxed) {
-                return None;
+        loop {
+            for attempt in 0..PERCEPTION_MAX_ATTEMPTS {
+                if self.cancelled.load(Ordering::Relaxed) {
+                    return None;
+                }
+
+                let cursor = input_monitor.poll().cursor;
+                let frame = match self.capture_frame(scan_ctx, cursor).await {
+                    Ok(f) => f,
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "roota.orchestrator",
+                            attempt,
+                            "perception failed: {err}"
+                        );
+                        tokio::time::sleep(Duration::from_millis(PERCEPTION_POLL_MS)).await;
+                        continue;
+                    }
+                };
+                if let Ok(step) = self.decision.next_step(intent, template, &frame, session) {
+                    if step.anchor_xy.is_some() {
+                        tracing::info!(
+                            target: "roota.orchestrator",
+                            attempt,
+                            primary = %frame.primary_window_title(),
+                            windows = frame.windows.len(),
+                            elements = frame.elements.len(),
+                            "target located on screen"
+                        );
+                        return Some((frame, step));
+                    }
+                }
+
+                if attempt == 0 || attempt % 3 == 0 {
+                    let prep = self.prep_step(session, template, &frame, intent);
+                    self.emit_step(sink, &prep).await;
+                }
+
+                tokio::time::sleep(Duration::from_millis(PERCEPTION_POLL_MS)).await;
             }
 
+            if !session.can_replan() {
+                return None;
+            }
             let cursor = input_monitor.poll().cursor;
             let frame = match self.capture_frame(scan_ctx, cursor).await {
                 Ok(f) => f,
-                Err(err) => {
-                    tracing::warn!(
-                        target: "roota.orchestrator",
-                        attempt,
-                        "perception failed: {err}"
-                    );
-                    tokio::time::sleep(Duration::from_millis(PERCEPTION_POLL_MS)).await;
-                    continue;
-                }
+                Err(_) => return None,
             };
-            if let Ok(step) = self.decision.next_step(intent, template, &frame, session) {
-                if step.anchor_xy.is_some() {
-                    tracing::info!(
-                        target: "roota.orchestrator",
-                        attempt,
-                        primary = %frame.primary_window_title(),
-                        windows = frame.windows.len(),
-                        elements = frame.elements.len(),
-                        "target located on screen"
-                    );
-                    return Some((frame, step));
-                }
+            let target = template
+                .steps
+                .get(session.step_index)
+                .map(|s| s.target_query.clone())
+                .unwrap_or_default();
+            let reason = ReplanReason::TargetNotFound {
+                step_index: session.step_index,
+                target,
+            };
+            if self
+                .try_replan(sink, template, session, brief, scan_ctx, &frame, reason)
+                .await
+            {
+                continue;
             }
-
-            if attempt == 0 || attempt % 3 == 0 {
-                let prep = self.prep_step(session, template, &frame, intent);
-                self.emit_step(sink, &prep).await;
-            }
-
-            tokio::time::sleep(Duration::from_millis(PERCEPTION_POLL_MS)).await;
+            return None;
         }
-        None
     }
 
     /// Capture a `ScreenFrame` on the blocking pool (UIA + optional vision
@@ -526,32 +807,10 @@ impl Orchestrator {
         input: &crate::input::InputSample,
         allow_llm: bool,
     ) -> String {
-        let mut fallback = if step.anchor_xy.is_none() {
-            step.instruction.clone()
-        } else {
-            let key = match step.action {
-                ActionVerb::Click => "guidance.click_target",
-                ActionVerb::DoubleClick => "guidance.double_click_target",
-                ActionVerb::RightClick => "guidance.right_click_target",
-                ActionVerb::Type => "guidance.type_in_target",
-                ActionVerb::Locate => "guidance.locate_target",
-            };
-            i18n::t(key, self.lang, &[("target", &step.target_text)])
-        };
+        let has_anchor = step.anchor_xy.is_some();
+        let fallback = canonical_instruction(self.lang, step, has_anchor);
 
-        if frame.quality == PerceptionQuality::DegradedUiaOnly {
-            let limited = i18n::t("guidance.perception_limited", self.lang, &[]);
-            if !limited.starts_with("guidance.") {
-                fallback = format!("{limited} {fallback}");
-            }
-        } else if frame.quality == PerceptionQuality::VisionAssisted {
-            let note = i18n::t("guidance.perception_vision_assisted", self.lang, &[]);
-            if !note.starts_with("guidance.") {
-                fallback = format!("{note} {fallback}");
-            }
-        }
-
-        if !allow_llm || step.anchor_xy.is_none() || frame.elements.is_empty() {
+        if !allow_llm || !has_anchor || frame.elements.is_empty() {
             return fallback;
         }
 
@@ -560,10 +819,12 @@ impl Orchestrator {
         if !intent.target.is_empty() {
             hints.push(intent.target.clone());
         }
-        let visible = frame.ranked_visible_summary(
+        let visible = visible_elements_for_prompt(
+            frame,
             perception.prompt_max_elements,
             &hints,
             input.cursor,
+            &step.target_text,
         );
         let window_list = frame.window_list_for_prompt(perception.prompt_max_windows);
         let primary_title = frame.primary_window_title();
@@ -598,15 +859,23 @@ impl Orchestrator {
             String::new()
         };
 
+        let hint = click_hint(self.lang, step.action);
+        let cue = guidance_copy::overlay_cue(self.lang, step.action);
+        let goal = goal_summary(self.lang, template, &step.target_text);
+        let target_el = target_element(frame, &step.target_text);
+        let spatial = spatial_hint(frame, target_el);
+
         let prompt = prompts::render_instruction_step(InstructionPromptContext {
-            goal: &intent.intent,
+            goal_summary: &goal,
             step_index: step.index,
             total_steps: step.total,
-            action: &action_verb_label(step.action, self.lang),
+            click_hint: &hint,
+            overlay_cue: &cue,
             target: &step.target_text,
             window_title: &window_title,
             window_list: &window_list,
             visible_elements: &visible,
+            spatial_hint: &spatial,
             cursor_line: &cursor_line,
             target_on_screen: true,
             perception_quality: frame.quality.label(),
@@ -624,10 +893,15 @@ impl Orchestrator {
         .await
         {
             Ok(Ok(text)) => {
-                let trimmed = text.trim().lines().next().unwrap_or("").trim().to_string();
-                if trimmed.len() >= 8 {
-                    return trimmed;
+                if let Some(accepted) =
+                    accept_llm_instruction(&text, step, &hint)
+                {
+                    return accepted;
                 }
+                tracing::warn!(
+                    target: "roota.orchestrator",
+                    "LLM instruction rejected (contract mismatch)"
+                );
             }
             Ok(Err(err)) => {
                 tracing::warn!(target: "roota.orchestrator", "LLM instruction: {err}");
@@ -646,15 +920,38 @@ impl Orchestrator {
     pub fn perceiver_name(&self) -> &str {
         self.perceiver.name()
     }
+
+    /// Map classifier output to a registry template (known intents or universal `windows_task`).
+    fn resolve_template_key(&self, intent: &Intent) -> String {
+        if intent.intent == "unknown" {
+            return "unknown".to_string();
+        }
+        if self.templates.get(&intent.intent).is_some() {
+            return intent.intent.clone();
+        }
+        if self.templates.get("windows_task").is_some() {
+            return "windows_task".to_string();
+        }
+        "unknown".to_string()
+    }
 }
 
-fn action_verb_label(action: ActionVerb, lang: Lang) -> String {
-    let key = match action {
-        ActionVerb::Click => "action.click",
-        ActionVerb::DoubleClick => "action.double_click",
-        ActionVerb::RightClick => "action.right_click",
-        ActionVerb::Type => "action.type",
-        ActionVerb::Locate => "action.locate",
-    };
-    i18n::t(key, lang, &[])
+#[cfg(test)]
+mod orchestrator_event_tests {
+    use super::*;
+
+    #[test]
+    fn plan_preview_event_serializes() {
+        let e = OrchestratorEvent::PlanPreview {
+            summary: "Abrir Descargas".into(),
+            steps: vec![PlanStepSummary {
+                index: 1,
+                action: ActionVerb::Click,
+                target: "Descargas".into(),
+            }],
+        };
+        let j = serde_json::to_string(&e).unwrap();
+        assert!(j.contains("PlanPreview"));
+        assert!(j.contains("Descargas"));
+    }
 }

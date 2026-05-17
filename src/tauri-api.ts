@@ -6,6 +6,7 @@ export const COMMAND = {
   startSession: "start_session",
   confirmResponse: "confirm_response",
   cancelSession: "cancel_session",
+  requestStuckHelp: "request_stuck_help",
   showOverlayAnchor: "show_overlay_anchor",
   clearOverlay: "clear_overlay",
   togglePanel: "toggle_panel",
@@ -36,6 +37,10 @@ export async function confirmResponse(accepted: boolean): Promise<void> {
 
 export async function cancelSession(): Promise<void> {
   await invoke(COMMAND.cancelSession);
+}
+
+export async function requestStuckHelp(): Promise<void> {
+  await invoke(COMMAND.requestStuckHelp);
 }
 
 export async function togglePanel(): Promise<boolean> {

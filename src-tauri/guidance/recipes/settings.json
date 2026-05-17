@@ -1,0 +1,6 @@
+{
+  "open_settings": [
+    { "action": "click", "target_query": "Inicio" },
+    { "action": "click", "target_query": "Configuración" }
+  ]
+}

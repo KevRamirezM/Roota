@@ -60,24 +60,103 @@ static RULES: Lazy<Vec<Rule>> = Lazy::new(|| {
             "compose_email",
             "Elena",
         ),
-        r(r"(correo|email|gmail)", "compose_email", ""),
         r(r"(chrome|navegador|browser)", "open_browser", "Chrome"),
         r(r"(word|documento de word)", "open_word_document", ""),
     ]
 });
 
 /// Classify a raw user utterance (not the full classifier prompt).
+/// Returns `(json, rule_matched)` — only the first tuple element is used by legacy callers.
 pub fn classify_utterance(utterance: &str) -> Value {
+    classify_utterance_detailed(utterance).0
+}
+
+/// When `rule_matched` is false, the utterance fell through to generic `windows_task`
+/// and should be classified by the real LLM instead of the stub fast-path.
+pub fn classify_utterance_detailed(utterance: &str) -> (Value, bool) {
     for rule in RULES.iter() {
         if rule.pattern.is_match(utterance) {
-            return json!({
-                "intent": rule.intent,
-                "target": rule.target,
-                "params": {},
-            });
+            return (
+                json!({
+                    "intent": rule.intent,
+                    "target": rule.target,
+                    "params": {},
+                }),
+                true,
+            );
         }
     }
-    json!({ "intent": "unknown", "target": "", "params": {} })
+  // Cursor / terminal / IDE tasks — concise target for planner, not the full sentence.
+    let lower = utterance.to_lowercase();
+    if lower.contains("cursor")
+        && (lower.contains("terminal") || lower.contains("consola") || lower.contains("powershell"))
+    {
+        return (
+            json!({
+                "intent": "windows_task",
+                "target": "Terminal",
+                "params": {},
+            }),
+            true,
+        );
+    }
+    if lower.contains("cursor") && (lower.contains("abrir") || lower.contains("open")) {
+        return (
+            json!({
+                "intent": "windows_task",
+                "target": "Cursor",
+                "params": {},
+            }),
+            true,
+        );
+    }
+    if lower.contains("configuración") || lower.contains("configuracion") || lower.contains("settings")
+    {
+        let target = if lower.contains("windows") || lower.contains("sistema") {
+            "Configuración"
+        } else {
+            "Settings"
+        };
+        return (
+            json!({
+                "intent": "windows_task",
+                "target": target,
+                "params": {},
+            }),
+            true,
+        );
+    }
+
+    let target = extract_windows_task_target(utterance);
+    (
+        json!({
+            "intent": "windows_task",
+            "target": target,
+            "params": {},
+        }),
+        false,
+    )
+}
+
+/// Short label for dynamic tasks when no regex rule matched.
+fn extract_windows_task_target(utterance: &str) -> String {
+    let lower = utterance.to_lowercase();
+    for (needle, label) in [
+        ("terminal", "Terminal"),
+        ("consola", "Terminal"),
+        ("powershell", "PowerShell"),
+        ("bluetooth", "Bluetooth"),
+        ("wifi", "Wi-Fi"),
+        ("volumen", "volumen"),
+        ("cursor", "Cursor"),
+        ("vscode", "Visual Studio Code"),
+        ("visual studio code", "Visual Studio Code"),
+    ] {
+        if lower.contains(needle) {
+            return label.to_string();
+        }
+    }
+    utterance.trim().chars().take(48).collect()
 }
 
 pub fn is_known_intent(value: &Value) -> bool {
@@ -146,7 +225,8 @@ mod tests {
 
     #[test]
     fn classifies_spanish_downloads_folder() {
-        let v = classify_utterance("Abre la carpeta de Descargas");
+        let (v, matched) = classify_utterance_detailed("Abre la carpeta de Descargas");
+        assert!(matched);
         assert_eq!(v["intent"], "open_folder");
         assert_eq!(v["target"], "Descargas");
     }
@@ -163,17 +243,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_when_no_rule_matches() {
+    async fn unmatched_utterance_becomes_windows_task() {
         let stub = StubLlmClient;
         let v = stub.complete_json("foo bar baz qux", None).await.unwrap();
-        assert_eq!(v["intent"], "unknown");
+        assert_eq!(v["intent"], "windows_task");
+    }
+
+    #[test]
+    fn generic_utterance_not_rule_matched() {
+        let (_, matched) = classify_utterance_detailed("foo bar baz qux");
+        assert!(!matched);
+    }
+
+    #[test]
+    fn cursor_terminal_rule_matched() {
+        let (v, matched) =
+            classify_utterance_detailed("como abro una terminal en cursor");
+        assert!(matched);
+        assert_eq!(v["intent"], "windows_task");
+        assert_eq!(v["target"], "Terminal");
     }
 
     #[test]
     fn does_not_match_examples_inside_classifier_prompt() {
         let prompt = include_str!("../../prompts/intent_classifier.txt")
             .replace("{utterance}", "Abre el navegador");
-        let v = classify_utterance(extract_user_utterance(&prompt));
+        let (v, _) = classify_utterance_detailed(extract_user_utterance(&prompt));
         assert_eq!(v["intent"], "open_browser");
     }
 

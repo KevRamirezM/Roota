@@ -6,7 +6,7 @@ use serde::Serialize;
 use tauri::{ipc::Channel, AppHandle, Emitter, Manager, State, WebviewWindow};
 use thiserror::Error;
 
-use crate::i18n;
+use crate::orchestration::guidance_copy;
 use crate::orchestration::state::{ActionVerb, GuideStep};
 use crate::orchestration::OrchestratorEvent;
 use crate::overlay::OverlayRect;
@@ -53,14 +53,7 @@ struct AnchorPayload {
 }
 
 fn action_click_hint(action: ActionVerb, lang: Lang) -> String {
-    let key = match action {
-        ActionVerb::Click => "guidance.hint.click",
-        ActionVerb::DoubleClick => "guidance.hint.double_click",
-        ActionVerb::RightClick => "guidance.hint.right_click",
-        ActionVerb::Type => "guidance.hint.type",
-        ActionVerb::Locate => "guidance.hint.locate",
-    };
-    i18n::t(key, lang, &[])
+    guidance_copy::click_hint(lang, action)
 }
 
 fn step_rect(overlay: &WebviewWindow, step: &GuideStep) -> Option<OverlayRect> {
@@ -221,6 +214,12 @@ pub async fn confirm_response(
         }
     }
     state.orchestrator.resolve_confirmation(accepted).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn request_stuck_help(state: State<'_, AppState>) -> Result<(), AppError> {
+    state.orchestrator.request_stuck_help();
     Ok(())
 }
 

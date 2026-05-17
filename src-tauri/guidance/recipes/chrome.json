@@ -1,0 +1,9 @@
+{
+  "new_tab": [
+    { "action": "click", "target_query": "Nueva pestaña" },
+    { "action": "click", "target_query": "New Tab" }
+  ],
+  "open_browser": [
+    { "action": "locate", "target_query": "Google Chrome" }
+  ]
+}

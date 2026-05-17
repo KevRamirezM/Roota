@@ -9,7 +9,7 @@ pub enum PerceptionError {
     Uia(String),
     #[error("screen capture failed: {0}")]
     Capture(String),
-    #[error("OCR engine failed: {0}")]
+    #[error("vision model failed: {0}")]
     Ocr(String),
     #[error("no visible windows to perceive")]
     NoWindows,

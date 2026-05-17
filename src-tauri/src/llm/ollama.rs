@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use crate::llm::client::{LlmClient, LlmError};
 use crate::settings::Settings;
 
+/// Keep Moondream loaded between perception ticks (Ollama `keep_alive`).
+const VISION_KEEP_ALIVE: &str = "15m";
+
 #[derive(Debug, Clone)]
 pub struct OllamaClient {
     base_url: String,
@@ -30,14 +33,14 @@ impl OllamaClient {
         )
     }
 
-    /// Vision-tuned client (Moondream) with a shorter timeout and JSON output.
+    /// Vision-tuned client (Moondream) with JSON output and a generous timeout.
     pub fn for_vision(settings: &Settings) -> Self {
         Self::with_model(
             settings,
             settings.perception.vision_model.clone(),
             settings.perception.vision_timeout_secs,
             0.1,
-            512,
+            settings.perception.vision_max_tokens,
         )
     }
 
@@ -72,6 +75,10 @@ impl OllamaClient {
         &self.model
     }
 
+    pub fn timeout_secs(&self) -> f32 {
+        self.timeout_secs
+    }
+
     fn build_messages<'a>(&self, prompt: &'a str, system: Option<&'a str>) -> Vec<ChatMsg<'a>> {
         let mut msgs = Vec::with_capacity(2);
         if let Some(s) = system {
@@ -100,6 +107,7 @@ impl OllamaClient {
             messages: self.build_messages(prompt, system),
             stream: false,
             format: if json_format { Some("json") } else { None },
+            keep_alive: None,
             options: ChatOptions {
                 temperature: self.temperature,
                 num_predict: self.max_tokens,
@@ -161,6 +169,15 @@ impl OllamaClient {
         prompt: &str,
         png_bytes: &[u8],
     ) -> Result<serde_json::Value, LlmError> {
+        self.complete_vision_json_blocking_with_keep_alive(prompt, png_bytes, Some(VISION_KEEP_ALIVE))
+    }
+
+    fn complete_vision_json_blocking_with_keep_alive(
+        &self,
+        prompt: &str,
+        png_bytes: &[u8],
+        keep_alive: Option<&str>,
+    ) -> Result<serde_json::Value, LlmError> {
         let b64 = B64.encode(png_bytes);
         let body = ChatRequest {
             model: &self.model,
@@ -171,6 +188,7 @@ impl OllamaClient {
             }],
             stream: false,
             format: Some("json"),
+            keep_alive,
             options: ChatOptions {
                 temperature: self.temperature,
                 num_predict: self.max_tokens,
@@ -184,6 +202,23 @@ impl OllamaClient {
             return Err(LlmError::NotAnObject);
         }
         Ok(value)
+    }
+
+    /// Load the vision model into Ollama so the first user capture is not cold.
+    pub fn warmup_vision_blocking(&self) -> Result<(), LlmError> {
+        const TINY_PNG: &[u8] = &[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x08,
+            0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xdd, 0x8d,
+            0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        let _ = self.complete_vision_json_blocking_with_keep_alive(
+            "Return only: {\"elements\":[]}",
+            TINY_PNG,
+            Some(VISION_KEEP_ALIVE),
+        )?;
+        Ok(())
     }
 
     /// Sync reachability probe — safe to call from Tauri `.setup()` (no `block_on`).
@@ -259,6 +294,8 @@ struct ChatRequest<'a> {
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     format: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    keep_alive: Option<&'a str>,
     options: ChatOptions,
 }
 
