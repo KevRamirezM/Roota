@@ -1,0 +1,29 @@
+{
+  "name": "roota",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Edge AI desktop assistant for senior citizens — Tauri 2 + Rust + React",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-global-shortcut": "^2.3.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.6"
+  }
+}

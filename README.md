@@ -1,11 +1,10 @@
 # Roota
 
-> **Edge AI desktop assistant for senior citizens** — on-device, fully offline, accessibility-first.
+> **Edge AI desktop assistant for senior citizens** — Tauri 2 + Rust + React, fully offline, accessibility-first.
 
-Roota translates plain natural-language commands (typed or spoken) into step-by-step
-visual guidance directly on the Windows desktop. It **never moves the mouse, types
-for you, or reaches the network**. Roota is a calm, patient companion — not an
-autopilot.
+Roota translates plain natural-language commands into single-step visual guidance
+on the Windows desktop. It **never moves the mouse, types for you, or reaches the
+network**. Roota is a calm, patient companion, not an autopilot.
 
 ---
 
@@ -13,122 +12,153 @@ autopilot.
 
 | Layer | Technology |
 |---|---|
-| UI Framework | PySide6 (WCAG AAA palette, 22pt+ typography, giant YES/NO modal) |
-| Visual overlay | Frameless, click-through, always-on-top transparent window |
-| Windows Accessibility | pywinauto (UIA backend) — read-only |
-| Local LLM | Ollama running `qwen2.5:3b` (with deterministic stub fallback) |
-| Speech-to-Text | faster-whisper, fully offline (`NullSTT` fallback) |
-| Text-to-Speech | pyttsx3 / Windows SAPI (`NullTTS` fallback) |
-| Audio capture | sounddevice (push-to-talk) |
-| Configuration | pydantic-settings |
-| Logging | loguru — local files only |
+| Desktop shell | Tauri 2 |
+| Backend | Rust (edition 2021, stable) |
+| Async runtime | tokio (multi-thread) |
+| HTTP / LLM | reqwest + Ollama `qwen2.5:3b` |
+| Windows accessibility | `uiautomation` crate (read-only) |
+| Visual overlay | Frameless click-through Tauri webview window |
+| Frontend | React 18 + TypeScript + Vite |
+| Logging | tracing |
 
 ---
 
 ## Prerequisites
 
-- **Python 3.10+** — [python.org](https://www.python.org/downloads/) (tested on 3.13.9)
-- **Ollama** — [ollama.com](https://ollama.com/) (must be running locally)
-- **`qwen2.5:3b` model** pulled in Ollama (≈1.9 GB RAM at runtime):
+- **Windows 10/11** (UI Automation backend is Windows-only — non-Windows hosts compile, but the scanner returns a deterministic stub snapshot).
+- **Rust toolchain** via [rustup](https://rustup.rs/) (`rustc` 1.77+, `cargo`).
+- **Microsoft Visual Studio 2022 Build Tools** with the *Desktop development with C++* workload (required by Tauri to link the Windows binary).
+- **Node.js 18+** and **npm** (or pnpm).
+- **Ollama** running locally with `qwen2.5:3b` pulled:
   ```powershell
   ollama pull qwen2.5:3b
   ```
-- A working microphone (only required for voice input)
+- **WebView2 Runtime** (already shipped with Windows 10 21H2+ and Windows 11).
 
 ---
 
-## Setup (Windows PowerShell)
+## Setup
 
 ```powershell
 git clone <repo-url>
 cd Roota
 
-python -m venv .venv
-.venv\Scripts\activate
+# Install JS deps
+npm install
 
-pip install -r requirements.txt
+# Sanity check Rust + Cargo
+cargo --version
 
-copy .env.example .env   # adjust if needed
+# Run the dev build (launches main window + hidden overlay)
+npm run tauri:dev
+```
 
-python -m app.ui.main
+### Optional environment overrides
+
+Create a `.env` next to `package.json` (gitignored) to override defaults:
+
+```ini
+OLLAMA_HOST=http://localhost:11434
+LLM_MODEL=qwen2.5:3b
+LLM_TEMPERATURE=0.3
+LLM_MAX_TOKENS=512
+LLM_TIMEOUT_SECONDS=30
+UI_LANGUAGE=es        # or en
+OVERLAY_OPACITY=0.85
+OVERLAY_FPS=30
+LOG_LEVEL=info
+SAFETY_STRICT=true
 ```
 
 ---
 
 ## Demo Flow
 
-1. Run `python -m app.ui.main`. A large window opens asking *"¿Qué tarea quieres que haga por ti hoy?"*.
-2. Type **"Abre la carpeta de Descargas"** (or press the microphone button and speak it).
-3. Roota shows a giant green **SÍ** / red **NO** modal: *"Voy a empezar a abrir la carpeta Descargas. ¿Está bien?"*.
-4. Press **SÍ** (or `Y` / Enter on the keyboard).
-5. Roota draws a pulsing visual anchor on the Downloads icon in File Explorer and reads aloud *"Haz doble clic en Descargas"*.
-6. Open the folder yourself. Roota detects the change and shows a positive *"¡Perfecto!"* state.
+1. `npm run tauri:dev` launches the main Roota window (and a hidden overlay window that becomes visible only when an anchor is shown).
+2. The greeting reads *"¿Qué tarea quieres que haga por ti hoy?"*.
+3. Type **"Abre la carpeta de Descargas"** and press **Empezar**.
+4. A massive green **SÍ** / red **NO** modal asks: *"Voy a abrir la carpeta Descargas. ¿Está bien?"* (Y/Enter or N/Esc shortcuts work).
+5. On YES, the overlay window draws a pulsing yellow anchor over the target element in File Explorer with a label.
+6. Open the folder yourself. Roota detects the change and shows the *"¡Listo!"* state.
 
-Other supported commands: `"abre Chrome"`, `"busca el clima"`, `"escríbele un correo a Elena"`, `"abre mi bandeja de entrada"`, `"abre Word"`, `"imprime el documento"`, `"borra esta foto"`, `"mueve este archivo"`, etc.
+Other supported intents (with offline stub fallback): `open_folder`, `move_file`, `delete_file`, `open_browser`, `search_web`, `open_url`, `compose_email`, `read_inbox`, `reply_message`, `open_word_document`, `print_document`.
 
 ---
 
 ## Project Structure
 
 ```
-app/
-├── accessibility/   # UIA tree scanners and coordinate parsers (pywinauto + stub)
-├── overlay/         # Frameless click-through visual guidance plane
-├── llm/             # LLMClient Protocol, OllamaClient, StubLLMClient, ResilientLLMClient
-├── voice/           # Pyttsx3TTS, WhisperSTT, MicrophoneRecorder
-├── orchestration/   # The brain - intent, decision, state detector, orchestrator
-├── prompts/         # System prompt + intent classifier + JSON guidance templates
-├── state/           # Session and step tracking
-├── ui/              # PySide6 main window, confirmation modal, feedback panel, theme
-├── safety/          # SafetyGuard - rejects any automating action
-├── i18n/            # Spanish (default) + English string catalogs
-├── telemetry/       # Local-only loguru config
-└── config/          # Pydantic settings loaded from .env
-
-docs/superpowers/    # Spec + execution log
-tests/               # 125 unit + smoke tests
+.
+├── index.html                  # Vite root
+├── vite.config.ts
+├── tsconfig.json
+├── package.json
+├── src/                        # React frontend (TypeScript)
+│   ├── App.tsx                 # Routes between MainScreen and OverlayCanvas
+│   ├── theme.css               # WCAG AAA palette + large typography
+│   ├── i18n.ts                 # ES/EN strings, kept in sync with Rust catalog
+│   ├── tauri-api.ts            # invoke + listen wrappers
+│   ├── components/
+│   │   ├── MainScreen.tsx
+│   │   ├── ConfirmationModal.tsx   # giant YES/NO native <dialog>
+│   │   ├── FeedbackPanel.tsx       # aria-live region
+│   │   └── OverlayCanvas.tsx       # pulsing anchor on transparent canvas
+│   └── hooks/useOrchestrator.ts
+└── src-tauri/                  # Rust backend
+    ├── Cargo.toml
+    ├── tauri.conf.json         # main + overlay window definitions
+    ├── capabilities/default.json
+    ├── prompts/                # system + intent classifier + step prompts (embed!)
+    ├── templates/              # JSON guidance templates merged at boot
+    ├── icons/
+    └── src/
+        ├── main.rs             # thin passthrough — calls roota_lib::run()
+        ├── lib.rs              # builder + state + generate_handler!
+        ├── settings.rs         # env-loaded Settings
+        ├── i18n.rs             # ES/EN catalog + t()
+        ├── safety.rs           # SafetyGuard, GuideAction, ActionType, UnsafeActionError
+        ├── prompts.rs          # include_str! prompt loaders
+        ├── llm/                # LlmClient trait + Ollama + stub + resilient
+        ├── accessibility/      # UiElement, UiSnapshot, Scanner trait, Windows + stub
+        ├── orchestration/      # Intent, decision, state detector, templates, orchestrator
+        └── commands.rs         # Tauri command handlers
 ```
 
 ---
 
-## Running the Tests
+## Verifying the build
 
 ```powershell
-$env:QT_QPA_PLATFORM = "offscreen"
-.venv\Scripts\python.exe -m pytest tests -q
-.venv\Scripts\python.exe -m ruff check app tests
-```
+# All Rust unit tests (27/27 expected)
+cargo test --manifest-path src-tauri/Cargo.toml --lib
 
-Expected: `125 passed` and `All checks passed!`.
+# Lint
+cargo clippy --manifest-path src-tauri/Cargo.toml --no-deps -- -D warnings
+
+# Frontend production bundle
+npm run build
+
+# Full Tauri release build (.exe + .msi installer)
+npm run tauri:build
+```
 
 ---
 
 ## Privacy & Safety Contract
 
-- All processing runs **100% on-device**. There is no network sink in the codebase.
-- **Roota never automates input.** A `SafetyGuard` runs every emitted action through a
-  closed allow-list (`anchor`, `highlight`, `arrow`, `speak`, `show_text`, `scan`).
-  Anything else (`click`, `type_text`, `key_press`, `drag`, `file_op`, ...) raises
-  `UnsafeActionError`.
-- The `WindowsScanner` only **reads** the active window's UIA tree.
-- Logs land under `logs/` and are rotated locally; nothing is uploaded.
+- All processing runs **100% on-device**. The only network call is to `localhost:11434` (Ollama).
+- **Roota never automates input.** A `SafetyGuard` runs every emitted action through a closed allow-list (`Anchor`, `Highlight`, `Arrow`, `Speak`, `ShowText`, `Scan`). Anything else (`Click`, `TypeText`, `KeyPress`, `Drag`, `FileOp`, …) raises `UnsafeActionError`.
+- The Windows scanner only **reads** the active foreground window's UIA tree.
+- The codebase imports zero input-synthesis crates (no `enigo`, no `Win32::UI::Input::KeyboardAndMouse` callers).
+- Logs land under `logs/` and are local-only; nothing is uploaded.
 
 ---
 
-## Troubleshooting
+## Resilience
 
-- **"Ollama not responding"** — make sure the daemon is running (`ollama serve`),
-  the model is pulled (`ollama list`), and the daemon is reachable at the
-  `OLLAMA_HOST` you set in `.env`. Roota will transparently fall back to a
-  deterministic stub LLM if Ollama is unreachable, so the UI still works.
-- **"model requires more system memory"** — close memory-hungry apps and retry.
-  Roota's `ResilientLLMClient` already falls back to the stub for that call.
-- **Microphone not detected** — check Windows microphone permissions for Python,
-  then click the microphone button. The UI shows
-  *"El micrófono no está listo. Puedes escribirlo en su lugar."* if it can't open.
-- **Overlay not visible** — Windows sometimes filters always-on-top windows; run
-  Roota as a normal user (no need for admin) and ensure no other always-on-top
-  app is shadowing it.
+- If Ollama is unreachable at boot, Roota uses a deterministic regex-based stub LLM so the UI still works.
+- If Ollama is up at boot but a single call fails (timeout, low memory, malformed JSON), `ResilientLlmClient` transparently falls back to the stub for the rest of the session — no crash, no broken demo.
+- The `WindowsScanner` returns an empty snapshot on any UIA error rather than panicking, and the orchestrator emits a friendly *"No encuentro {target}. ¿Lo ves en pantalla?"* error to the user.
 
 ---
 
@@ -136,7 +166,15 @@ Expected: `125 passed` and `All checks passed!`.
 
 | Phase | Status | Scope |
 |---|---|---|
-| Phase 1 — MVP | shipped | File Explorer guidance (Python + pywinauto + Ollama) |
-| Phase 2 — Voice | shipped | faster-whisper STT + pyttsx3 TTS |
-| Phase 3 — Multi-app | shipped | Chrome, Gmail, Office guidance templates |
-| Phase 4 — Production rewrite | not started | Native Rust + Tauri replacement |
+| Phase 1 — MVP | shipped (Rust) | File Explorer guidance, intent recognizer, overlay |
+| Phase 2 — Voice | not started | whisper.cpp STT + Piper/SAPI TTS — out of scope for this rewrite |
+| Phase 3 — Multi-app | shipped (Rust) | Chrome / Gmail / Office guidance JSON templates |
+| Phase 4 — Production rewrite | **shipped** | Tauri 2 + Rust + React replaces the prior Python prototype |
+
+---
+
+## Documentation
+
+- Spec: [`docs/superpowers/specs/2026-05-16-roota-rust-tauri-rewrite.md`](docs/superpowers/specs/2026-05-16-roota-rust-tauri-rewrite.md)
+- Implementation plan: [`docs/superpowers/plans/2026-05-16-roota-rust-tauri-rewrite.md`](docs/superpowers/plans/2026-05-16-roota-rust-tauri-rewrite.md)
+- Original PRD: [`PRD.md`](PRD.md)

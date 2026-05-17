@@ -1,0 +1,26 @@
+{
+  "open_folder": {
+    "expected_window": "Explorer",
+    "confirmation_action_key": "confirm.open_folder",
+    "steps": [
+      { "action": "double_click", "target_query": "{target}", "instruction_key": "guidance.double_click_target" }
+    ]
+  },
+  "move_file": {
+    "expected_window": "Explorer",
+    "confirmation_action_key": "confirm.move_file",
+    "steps": [
+      { "action": "locate", "target_query": "{target}", "instruction_key": "guidance.locate_target" },
+      { "action": "right_click", "target_query": "{target}", "instruction_key": "guidance.right_click_target" },
+      { "action": "click", "target_query": "Cortar", "instruction_key": "guidance.click_target" }
+    ]
+  },
+  "delete_file": {
+    "expected_window": "Explorer",
+    "confirmation_action_key": "confirm.delete_file",
+    "steps": [
+      { "action": "click", "target_query": "{target}", "instruction_key": "guidance.click_target" },
+      { "action": "locate", "target_query": "Suprimir", "instruction_key": "guidance.locate_target" }
+    ]
+  }
+}

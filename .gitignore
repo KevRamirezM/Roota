@@ -1,33 +1,9 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.pyo
-*.pyd
-.Python
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
 
-# Virtual environments
-.venv/
-venv/
-env/
-ENV/
-
-# Distribution / packaging
-dist/
-build/
-*.egg-info/
-*.egg
-.eggs/
-
-# Environment & secrets
-.env
-*.env.local
-
-# Logs
-logs/
-*.log
-
-# IDE
+# Editor
 .vscode/
 .idea/
 *.suo
@@ -36,18 +12,45 @@ logs/
 *.sln
 *.sw?
 
-# OS
-Thumbs.db
-.DS_Store
-desktop.ini
+# Logs
+logs/
+*.log
+*.log.*
 
-# Model weights (large binaries — store separately)
+# Local env
+.env
+*.env.local
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+
+# Rust / Tauri
+src-tauri/target/
+target/
+Cargo.lock
+src-tauri/gen/schemas/
+
+# Tauri build artefacts
+src-tauri/Cargo.lock
+src-tauri/WixTools/
+
+# Old Python prototype (will be removed)
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Misc
 *.gguf
 *.bin
 *.safetensors
 models/
-
-# Coverage & testing
-.coverage
-htmlcov/
-.pytest_cache/
