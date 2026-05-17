@@ -28,8 +28,16 @@ pub struct PerceptionSettings {
     pub mode: PerceptionMode,
     /// Cap EnumWindows scanning *after* scoring (never before — see spec).
     pub max_windows: usize,
-    /// Enable OCR fallback in hybrid mode (no effect when no engine wired).
+    /// Enable vision (Moondream) fallback in hybrid mode.
     pub vision_enabled: bool,
+    /// Ollama vision model tag (e.g. moondream:1.8b).
+    pub vision_model: String,
+    /// Per-vision-request timeout in seconds.
+    pub vision_timeout_secs: f32,
+    /// Max long edge of captured bitmap before sending to the VLM.
+    pub vision_max_edge: u32,
+    /// When true, write debug PNG captures to temp (dev only).
+    pub debug_capture: bool,
     pub ocr_language: String,
     pub capture_scale: f32,
     /// Below this many *interactable* elements in the primary window client
@@ -46,6 +54,10 @@ impl Default for PerceptionSettings {
             mode: PerceptionMode::Hybrid,
             max_windows: 8,
             vision_enabled: true,
+            vision_model: "moondream:1.8b".into(),
+            vision_timeout_secs: 8.0,
+            vision_max_edge: 768,
+            debug_capture: false,
             ocr_language: "es".into(),
             capture_scale: 0.75,
             min_uia_elements: 3,
@@ -62,6 +74,13 @@ impl PerceptionSettings {
             mode: PerceptionMode::parse(&env_or("ROOTA_PERCEPTION_MODE", "hybrid")),
             max_windows: env_parse("ROOTA_MAX_WINDOWS", default.max_windows),
             vision_enabled: env_parse_bool("ROOTA_VISION_ENABLED", default.vision_enabled),
+            vision_model: env_or("ROOTA_VISION_MODEL", &default.vision_model),
+            vision_timeout_secs: env_parse(
+                "ROOTA_VISION_TIMEOUT_SECS",
+                default.vision_timeout_secs,
+            ),
+            vision_max_edge: env_parse("ROOTA_VISION_MAX_EDGE", default.vision_max_edge),
+            debug_capture: env_parse_bool("ROOTA_DEBUG_CAPTURE", default.debug_capture),
             ocr_language: env_or("ROOTA_OCR_LANGUAGE", &default.ocr_language),
             capture_scale: env_parse("ROOTA_CAPTURE_SCALE", default.capture_scale),
             min_uia_elements: env_parse("ROOTA_MIN_UIA_ELEMENTS", default.min_uia_elements),
@@ -158,6 +177,9 @@ mod tests {
         assert_eq!(s.mode, PerceptionMode::Hybrid);
         assert_eq!(s.max_windows, 8);
         assert!(s.vision_enabled);
+        assert!(s.vision_model.contains("moondream"));
+        assert!((s.vision_timeout_secs - 8.0).abs() < f32::EPSILON);
+        assert_eq!(s.vision_max_edge, 768);
         assert_eq!(s.ocr_language, "es");
         assert!((s.capture_scale - 0.75).abs() < f32::EPSILON);
         assert_eq!(s.min_uia_elements, 3);

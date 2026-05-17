@@ -104,6 +104,14 @@ const ES: &[(&str, &str)] = &[
         "Estoy viendo la pantalla con detalle limitado;",
     ),
     (
+        "guidance.perception_vision_assisted",
+        "Leí parte de la pantalla con visión asistida;",
+    ),
+    (
+        "guidance.perception_vlm_note",
+        "Nota: algunos controles se leyeron por visión y pueden ser aproximados.",
+    ),
+    (
         "guidance.secure_desktop_blocked",
         "Windows está mostrando una pantalla protegida (clave o aviso del sistema). Cuando vuelvas al escritorio normal, pídemelo otra vez.",
     ),
@@ -254,6 +262,14 @@ const EN: &[(&str, &str)] = &[
     (
         "guidance.perception_limited",
         "I'm reading the screen with limited detail;",
+    ),
+    (
+        "guidance.perception_vision_assisted",
+        "I read part of the screen with assisted vision;",
+    ),
+    (
+        "guidance.perception_vlm_note",
+        "Note: some controls were read by vision and may be approximate.",
     ),
     (
         "guidance.secure_desktop_blocked",

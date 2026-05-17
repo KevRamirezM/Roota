@@ -8,6 +8,7 @@ Elemento objetivo: "{target}"
 Ventana activa donde el sistema centrará la guía: "{window_title}"
 Calidad de lectura de pantalla: {perception_quality}
 {warnings_line}
+{element_source_note}
 
 Ventanas visibles en pantalla (la marcada con * es la activa):
 {window_list}

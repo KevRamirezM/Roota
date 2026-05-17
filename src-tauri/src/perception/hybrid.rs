@@ -23,6 +23,7 @@ use crate::perception::vision::{
 use crate::perception::window_enum::list_visible_windows;
 use crate::perception::window_score::{rank_windows, visible_count, RankedWindow};
 use crate::perception::Perceiver;
+use crate::settings::Settings;
 
 pub struct HybridPerceiver {
     uia: UiaPerceiver,
@@ -38,9 +39,13 @@ impl Default for HybridPerceiver {
 
 impl HybridPerceiver {
     pub fn new() -> Self {
+        Self::from_settings(&Settings::from_env())
+    }
+
+    pub fn from_settings(settings: &Settings) -> Self {
         Self {
             uia: UiaPerceiver::new(),
-            vision: default_vision_perceiver(),
+            vision: default_vision_perceiver(settings),
             fusion: FusionEngine::new(),
         }
     }
@@ -135,7 +140,9 @@ impl Perceiver for HybridPerceiver {
         let mut vision_contributed = false;
         let should_run_vision = mode.vision_enabled()
             && ctx.vision_enabled()
-            && interactable_in_primary < ctx.min_uia_elements();
+            && self.vision.is_available()
+            && (interactable_in_primary < ctx.min_uia_elements()
+                || matches!(mode, crate::perception::context::PerceptionMode::VisionOnly));
 
         if should_run_vision {
             let req = VisionRequest {

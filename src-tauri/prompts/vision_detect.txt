@@ -1,0 +1,12 @@
+You analyze a screenshot of a desktop application window. List visible UI controls the user can click or read.
+
+Return ONLY valid JSON with this exact shape (no markdown):
+{"elements":[{"text":"label","x":0,"y":0,"w":80,"h":24,"kind":"button"}]}
+
+Rules:
+- Coordinates are relative to the image: (0,0) is top-left; x,y is top-left corner of each box; w,h are width and height in pixels.
+- Image size is {width}x{height} pixels.
+- Include buttons, links, menu items, tabs, and readable text regions.
+- Use the on-screen language (Spanish or English) for "text".
+- Omit decorative-only regions. Max 40 elements.
+- If nothing is visible, return {"elements":[]}.

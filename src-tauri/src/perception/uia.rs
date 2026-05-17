@@ -17,10 +17,24 @@ pub(crate) const SKIP_CONTROL_MARKERS: &[&str] = &[
     "TitleBar",
     "Scrollbar",
     "Thumb",
-    "ToolBar",
     "ToolTip",
     "Separator",
 ];
+
+/// Skip chrome containers but not toolbar buttons (`ToolBarButton` matched `ToolBar`).
+pub(crate) fn should_skip_control(kind: &str) -> bool {
+    if is_toolbar_container(kind) {
+        return true;
+    }
+    SKIP_CONTROL_MARKERS.iter().any(|m| kind.contains(m))
+}
+
+pub(crate) fn is_toolbar_container(kind: &str) -> bool {
+    kind.contains("ToolBar")
+        && !kind.contains("Button")
+        && !kind.contains("Item")
+        && !kind.contains("Menu")
+}
 
 /// Hard ceiling so a runaway tree walk cannot blow up RAM / latency.
 pub const MAX_ELEMENTS_TOTAL: usize = 800;
@@ -108,7 +122,6 @@ mod windows_impl {
     use super::{
         ElementSource, PerceptionError, PerceptionWarning, Rect, RankedWindow, ScreenElement,
         UiaCapture, WindowId, WindowSnapshot, MAX_ELEMENTS_PER_WINDOW, MAX_ELEMENTS_TOTAL,
-        SKIP_CONTROL_MARKERS,
     };
 
     use std::ffi::c_void;
@@ -230,7 +243,7 @@ mod windows_impl {
     fn to_screen_element(node: &UIElement, window_id: WindowId) -> Option<ScreenElement> {
         let control_type = node.get_control_type().ok()?;
         let kind = format!("{control_type:?}");
-        if SKIP_CONTROL_MARKERS.iter().any(|m| kind.contains(m)) {
+        if super::should_skip_control(&kind) {
             return None;
         }
 
@@ -314,5 +327,13 @@ mod tests {
     #[test]
     fn perceiver_name_is_stable() {
         assert_eq!(UiaPerceiver::new().name(), "uia-multi");
+    }
+
+    #[test]
+    fn toolbar_button_not_skipped_toolbar_container_is() {
+        assert!(!should_skip_control("ToolBarButton"));
+        assert!(!should_skip_control("ControlType_Button"));
+        assert!(should_skip_control("ToolBar"));
+        assert!(should_skip_control("ControlType_ToolBar"));
     }
 }

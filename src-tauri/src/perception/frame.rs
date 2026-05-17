@@ -76,6 +76,8 @@ impl Rect {
 pub enum ElementSource {
     Uia,
     Ocr,
+    /// Local VLM (e.g. Moondream via Ollama).
+    Vlm,
     Fused,
 }
 
@@ -265,9 +267,37 @@ impl ScreenFrame {
         self.elements
             .iter()
             .take(limit)
-            .map(|e| format!("- {} ({})", e.text, e.kind))
+            .map(format_element_line)
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Like `visible_summary`, but ranks by hint match, primary window, interactable
+    /// kind, cursor proximity, and confidence — not tree-walk order.
+    pub fn ranked_visible_summary(
+        &self,
+        limit: usize,
+        hints: &[String],
+        cursor: PhysicalPoint,
+    ) -> String {
+        let limit = limit.max(1);
+        let mut scored: Vec<(i32, &ScreenElement)> = self
+            .elements
+            .iter()
+            .map(|e| (rank_for_prompt(e, hints, cursor, self.primary_window_id), e))
+            .collect();
+        scored.sort_by_key(|b| std::cmp::Reverse(b.0));
+        scored
+            .into_iter()
+            .take(limit)
+            .map(|(_, e)| format_element_line(e))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// True when any element came from the local VLM layer.
+    pub fn has_vlm_elements(&self) -> bool {
+        self.elements.iter().any(|e| e.source == ElementSource::Vlm)
     }
 
     /// One-line-per-window list for the LLM prompt (capped to `limit`).
@@ -348,6 +378,51 @@ pub fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn format_element_line(e: &ScreenElement) -> String {
+    let src = match e.source {
+        ElementSource::Uia => "uia",
+        ElementSource::Ocr => "ocr",
+        ElementSource::Vlm => "vlm",
+        ElementSource::Fused => "fused",
+    };
+    let aid = e
+        .automation_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|id| format!(" id={id}"))
+        .unwrap_or_default();
+    let (cx, cy) = e.center();
+    format!(
+        "- {} ({}) [{src}]{aid} @({cx},{cy})",
+        e.text, e.kind
+    )
+}
+
+fn rank_for_prompt(
+    element: &ScreenElement,
+    hints: &[String],
+    cursor: PhysicalPoint,
+    primary_id: WindowId,
+) -> i32 {
+    let mut score = 0i32;
+    for hint in hints {
+        score = score.max(match_score(element, hint));
+    }
+    if element.window_id == primary_id {
+        score += 8;
+    }
+    if is_interactable_kind(&element.kind) {
+        score += 10;
+    }
+    let (cx, cy) = element.center();
+    let dx = (cursor.x - cx).abs();
+    let dy = (cursor.y - cy).abs();
+    let dist = dx.saturating_add(dy);
+    score += (500i32.saturating_sub(dist.min(500))) / 10;
+    score += (element.confidence.clamp(0.0, 1.0) * 15.0) as i32;
+    score
 }
 
 fn is_interactable_kind(kind: &str) -> bool {
@@ -558,6 +633,25 @@ mod tests {
         };
         let summary = frame.visible_summary(3);
         assert_eq!(summary.lines().count(), 3);
+    }
+
+    #[test]
+    fn ranked_visible_summary_prefers_hint_match() {
+        let mut elements = Vec::new();
+        for i in 0..50 {
+            elements.push(screen_el(&format!("el{i}"), 0, i * 10, 50, 20, 1));
+        }
+        elements.push(screen_el("Descargas", 400, 400, 80, 24, 1));
+        let frame = ScreenFrame {
+            elements,
+            ..ScreenFrame::empty()
+        };
+        let summary = frame.ranked_visible_summary(
+            5,
+            &["descargas".into()],
+            PhysicalPoint { x: 420, y: 410 },
+        );
+        assert!(summary.contains("Descargas"));
     }
 
     #[test]

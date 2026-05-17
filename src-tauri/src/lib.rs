@@ -28,7 +28,7 @@ use crate::settings::Settings;
 
 pub struct AppState {
     pub orchestrator: Arc<Orchestrator>,
-    pub running_session: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    pub running_session: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     pub settings: Settings,
 }
 
@@ -69,39 +69,8 @@ pub fn run() {
     let settings = Settings::from_env();
     init_tracing(&settings);
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime");
-
-    let llm = runtime.block_on(crate::llm::build_llm(&settings));
-    let perceiver: Arc<dyn Perceiver> = build_perceiver(&settings);
-    let templates = Arc::new(load_templates());
-    let orchestrator = Arc::new(Orchestrator::new(
-        llm,
-        perceiver.clone(),
-        templates,
-        settings.clone(),
-    ));
-
-    tracing::info!(
-        target: "roota",
-        "Boot: llm={} perceiver={} lang={:?}",
-        orchestrator.llm_name(),
-        orchestrator.perceiver_name(),
-        settings.ui_language,
-    );
-
-    let app_state = AppState {
-        orchestrator,
-        running_session: Mutex::new(None),
-        settings: settings.clone(),
-    };
-
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_runtime(runtime))
-        .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             commands::start_session,
             commands::confirm_response,
@@ -111,7 +80,32 @@ pub fn run() {
             commands::toggle_panel,
             commands::panel_visible,
         ])
-        .setup(|app| {
+        .setup(move |app| {
+            // Fully sync init — `block_on` inside `.setup()` panics on Tokio 1.52+.
+            let llm = crate::llm::build_llm_sync(&settings);
+            let perceiver: Arc<dyn Perceiver> = build_perceiver(&settings);
+            let templates = Arc::new(load_templates());
+            let orchestrator = Arc::new(Orchestrator::new(
+                llm,
+                perceiver,
+                templates,
+                settings.clone(),
+            ));
+
+            tracing::info!(
+                target: "roota",
+                "Boot: llm={} perceiver={} lang={:?}",
+                orchestrator.llm_name(),
+                orchestrator.perceiver_name(),
+                settings.ui_language,
+            );
+
+            app.manage(AppState {
+                orchestrator,
+                running_session: Mutex::new(None),
+                settings: settings.clone(),
+            });
+
             if let Some(overlay) = app.get_webview_window("overlay") {
                 let _ = overlay.set_ignore_cursor_events(true);
                 use tauri::window::Color;
@@ -157,18 +151,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running roota app");
 }
-
-fn tauri_plugin_runtime(
-    runtime: tokio::runtime::Runtime,
-) -> tauri::plugin::TauriPlugin<tauri::Wry> {
-    tauri::plugin::Builder::new("roota-runtime")
-        .setup(move |app, _api| {
-            app.manage(RuntimeHandle(runtime.handle().clone()));
-            // Keep the runtime alive for the lifetime of the app.
-            std::mem::forget(runtime);
-            Ok(())
-        })
-        .build()
-}
-
-pub struct RuntimeHandle(pub tokio::runtime::Handle);

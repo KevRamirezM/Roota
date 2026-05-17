@@ -109,7 +109,10 @@ mod tests {
             bounds: Rect::new(x, y, w, h),
             window_id: WindowId(window),
             kind: "Button".into(),
-            confidence: if source == ElementSource::Uia { 1.0 } else { 0.7 },
+            confidence: match source {
+                ElementSource::Uia => 1.0,
+                _ => 0.7,
+            },
             automation_id: None,
         }
     }
@@ -140,6 +143,16 @@ mod tests {
         let ocr = vec![el(ElementSource::Ocr, "B", 500, 500, 50, 30, 1)];
         let out = fusion.fuse(uia, ocr);
         assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn vlm_overlaps_uia_like_ocr() {
+        let fusion = FusionEngine::new();
+        let uia = vec![el(ElementSource::Uia, "Btn", 0, 0, 100, 50, 1)];
+        let vlm = vec![el(ElementSource::Vlm, "Btn Label", 5, 5, 100, 50, 1)];
+        let out = fusion.fuse(uia, vlm);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].source, ElementSource::Fused);
     }
 
     #[test]

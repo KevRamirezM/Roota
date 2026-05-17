@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::{Deserialize, Serialize};
 
 use crate::llm::client::{LlmClient, LlmError};
@@ -15,23 +16,60 @@ pub struct OllamaClient {
     max_tokens: u32,
     timeout_secs: f32,
     http: reqwest::Client,
+    blocking: reqwest::blocking::Client,
 }
 
 impl OllamaClient {
     pub fn new(settings: &Settings) -> Self {
-        let timeout_secs = settings.llm_timeout_seconds;
+        Self::with_model(
+            settings,
+            settings.llm_model.clone(),
+            settings.llm_timeout_seconds,
+            settings.llm_temperature,
+            settings.llm_max_tokens,
+        )
+    }
+
+    /// Vision-tuned client (Moondream) with a shorter timeout and JSON output.
+    pub fn for_vision(settings: &Settings) -> Self {
+        Self::with_model(
+            settings,
+            settings.perception.vision_model.clone(),
+            settings.perception.vision_timeout_secs,
+            0.1,
+            512,
+        )
+    }
+
+    fn with_model(
+        settings: &Settings,
+        model: String,
+        timeout_secs: f32,
+        temperature: f32,
+        max_tokens: u32,
+    ) -> Self {
+        let timeout = Duration::from_secs_f32(timeout_secs);
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs_f32(timeout_secs))
+            .timeout(timeout)
+            .build()
+            .unwrap_or_default();
+        let blocking = reqwest::blocking::Client::builder()
+            .timeout(timeout)
             .build()
             .unwrap_or_default();
         OllamaClient {
             base_url: settings.ollama_host.trim_end_matches('/').to_string(),
-            model: settings.llm_model.clone(),
-            temperature: settings.llm_temperature,
-            max_tokens: settings.llm_max_tokens,
+            model,
+            temperature,
+            max_tokens,
             timeout_secs,
             http,
+            blocking,
         }
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
     }
 
     fn build_messages<'a>(&self, prompt: &'a str, system: Option<&'a str>) -> Vec<ChatMsg<'a>> {
@@ -40,11 +78,13 @@ impl OllamaClient {
             msgs.push(ChatMsg {
                 role: "system",
                 content: s,
+                images: None,
             });
         }
         msgs.push(ChatMsg {
             role: "user",
             content: prompt,
+            images: None,
         });
         msgs
     }
@@ -65,8 +105,38 @@ impl OllamaClient {
                 num_predict: self.max_tokens,
             },
         };
+        self.post_chat_async(&body).await
+    }
+
+    fn post_chat_blocking<T: for<'de> Deserialize<'de>>(
+        &self,
+        body: &ChatRequest<'_>,
+    ) -> Result<T, LlmError> {
         let url = format!("{}/api/chat", self.base_url);
-        let resp = self.http.post(url).json(&body).send().await.map_err(|e| {
+        let resp = self.blocking.post(url).json(body).send().map_err(|e| {
+            if e.is_timeout() {
+                LlmError::Timeout {
+                    secs: self.timeout_secs,
+                }
+            } else {
+                LlmError::Transport(e.to_string())
+            }
+        })?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().unwrap_or_default();
+            return Err(LlmError::Transport(format!("status={status} body={text}")));
+        }
+        resp.json::<T>()
+            .map_err(|e| LlmError::Transport(e.to_string()))
+    }
+
+    async fn post_chat_async<T: for<'de> Deserialize<'de>>(
+        &self,
+        body: &ChatRequest<'_>,
+    ) -> Result<T, LlmError> {
+        let url = format!("{}/api/chat", self.base_url);
+        let resp = self.http.post(url).json(body).send().await.map_err(|e| {
             if e.is_timeout() {
                 LlmError::Timeout {
                     secs: self.timeout_secs,
@@ -84,6 +154,71 @@ impl OllamaClient {
             .await
             .map_err(|e| LlmError::Transport(e.to_string()))
     }
+
+    /// Multimodal JSON completion — blocking, for use inside `spawn_blocking`.
+    pub fn complete_vision_json_blocking(
+        &self,
+        prompt: &str,
+        png_bytes: &[u8],
+    ) -> Result<serde_json::Value, LlmError> {
+        let b64 = B64.encode(png_bytes);
+        let body = ChatRequest {
+            model: &self.model,
+            messages: vec![ChatMsg {
+                role: "user",
+                content: prompt,
+                images: Some(vec![b64]),
+            }],
+            stream: false,
+            format: Some("json"),
+            options: ChatOptions {
+                temperature: self.temperature,
+                num_predict: self.max_tokens,
+            },
+        };
+        let resp: ChatResponse = self.post_chat_blocking(&body)?;
+        let raw = resp.message.content.trim();
+        let value: serde_json::Value =
+            serde_json::from_str(raw).map_err(|_| LlmError::InvalidJson(raw.to_string()))?;
+        if !value.is_object() {
+            return Err(LlmError::NotAnObject);
+        }
+        Ok(value)
+    }
+
+    /// Sync reachability probe — safe to call from Tauri `.setup()` (no `block_on`).
+    pub fn health_check_blocking(&self) -> bool {
+        let url = format!("{}/api/tags", self.base_url);
+        match self
+            .blocking
+            .get(&url)
+            .timeout(Duration::from_secs(3))
+            .send()
+        {
+            Ok(resp) => resp.status().is_success(),
+            Err(_) => false,
+        }
+    }
+
+    /// Returns true when the configured vision model appears in `ollama list`.
+    pub fn vision_model_available(&self) -> bool {
+        let url = format!("{}/api/tags", self.base_url);
+        let Ok(resp) = self
+            .blocking
+            .get(&url)
+            .timeout(Duration::from_secs(3))
+            .send()
+        else {
+            return false;
+        };
+        let Ok(tags): Result<TagsResponse, _> = resp.json() else {
+            return false;
+        };
+        let needle = self.model.to_lowercase();
+        tags.models.iter().any(|m| {
+            m.name.to_lowercase() == needle || m.name.to_lowercase().starts_with(&format!("{needle}:"))
+        })
+    }
 }
 
 #[async_trait::async_trait]
@@ -93,12 +228,7 @@ impl LlmClient for OllamaClient {
     }
 
     async fn health_check(&self) -> bool {
-        let url = format!("{}/api/tags", self.base_url);
-        let timeout = Duration::from_secs(3);
-        match self.http.get(url).timeout(timeout).send().await {
-            Ok(resp) => resp.status().is_success(),
-            Err(_) => false,
-        }
+        self.health_check_blocking()
     }
 
     async fn complete_text(&self, prompt: &str, system: Option<&str>) -> Result<String, LlmError> {
@@ -136,6 +266,8 @@ struct ChatRequest<'a> {
 struct ChatMsg<'a> {
     role: &'a str,
     content: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    images: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -152,4 +284,14 @@ struct ChatResponse {
 #[derive(Deserialize)]
 struct ChatRespMessage {
     content: String,
+}
+
+#[derive(Deserialize)]
+struct TagsResponse {
+    models: Vec<ModelTag>,
+}
+
+#[derive(Deserialize)]
+struct ModelTag {
+    name: String,
 }

@@ -6,6 +6,7 @@
 //! file change: implement `VisionPerceiver` and pass it to `HybridPerceiver`.
 
 pub mod capture;
+pub mod moondream;
 pub mod ocr_windows;
 
 use crate::perception::error::PerceptionError;
@@ -60,8 +61,11 @@ impl VisionPerceiver for NoopVisionPerceiver {
     }
 }
 
-/// Build the platform default vision perceiver. Today: always no-op (the
-/// `xcap`/WinRT-OCR plumbing is intentionally absent — see plan Task 11/12).
-pub fn default_vision_perceiver() -> Box<dyn VisionPerceiver> {
-    Box::new(NoopVisionPerceiver)
+/// Build the platform default vision perceiver (Moondream when enabled).
+pub fn default_vision_perceiver(settings: &crate::settings::Settings) -> Box<dyn VisionPerceiver> {
+    if settings.perception.vision_enabled {
+        Box::new(moondream::MoondreamVisionPerceiver::new(settings))
+    } else {
+        Box::new(NoopVisionPerceiver)
+    }
 }

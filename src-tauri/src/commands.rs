@@ -12,7 +12,6 @@ use crate::orchestration::OrchestratorEvent;
 use crate::overlay::OverlayRect;
 use crate::settings::Lang;
 use crate::AppState;
-use crate::RuntimeHandle;
 
 pub const EVENT_GUIDANCE: &str = "roota://guidance";
 pub const EVENT_ANCHOR: &str = "roota://anchor";
@@ -184,7 +183,6 @@ pub async fn start_session(
     on_event: Channel<OrchestratorEvent>,
     app: AppHandle,
     state: State<'_, AppState>,
-    runtime: State<'_, RuntimeHandle>,
 ) -> Result<(), AppError> {
     let utterance = utterance.trim().to_string();
     if utterance.is_empty() {
@@ -199,7 +197,7 @@ pub async fn start_session(
         lang,
     });
 
-    let handle = runtime.0.spawn(async move {
+    let handle = tauri::async_runtime::spawn(async move {
         orchestrator.run(utterance, sink).await;
     });
 

@@ -21,6 +21,7 @@ pub struct InstructionPromptContext<'a> {
     pub target_on_screen: bool,
     pub perception_quality: &'a str,
     pub warnings_line: &'a str,
+    pub element_source_note: &'a str,
 }
 
 pub fn render_instruction_step(ctx: InstructionPromptContext<'_>) -> String {
@@ -42,6 +43,7 @@ pub fn render_instruction_step(ctx: InstructionPromptContext<'_>) -> String {
         .replace("{anchor_status}", anchor_status)
         .replace("{perception_quality}", ctx.perception_quality)
         .replace("{warnings_line}", ctx.warnings_line)
+        .replace("{element_source_note}", ctx.element_source_note)
 }
 
 #[cfg(test)]
@@ -63,6 +65,7 @@ mod tests {
             target_on_screen: true,
             perception_quality: "full",
             warnings_line: "",
+            element_source_note: "",
         });
         assert!(out.contains("Descargas"));
         assert!(out.contains("full"));

@@ -50,6 +50,5 @@ use crate::settings::Settings;
 /// `HybridPerceiver`; if we ever need a forced-stub override, gate it
 /// behind `ROOTA_PERCEPTION_MODE=stub` (not in scope for v1).
 pub fn build_perceiver(settings: &Settings) -> Arc<dyn Perceiver> {
-    let _ = settings; // perception settings live on the context, not the struct
-    Arc::new(HybridPerceiver::new())
+    Arc::new(HybridPerceiver::from_settings(settings))
 }

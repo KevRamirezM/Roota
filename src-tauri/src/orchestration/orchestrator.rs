@@ -188,6 +188,7 @@ impl Orchestrator {
                     &frame_before,
                     &intent,
                     &template,
+                    &scan_ctx,
                     &input_monitor.poll(),
                     true,
                 )
@@ -423,7 +424,7 @@ impl Orchestrator {
             scan_ctx,
             cursor,
             &FrameCache::new(),
-            InvalidateReason::Initial,
+            InvalidateReason::StepBoundary,
             false,
         )
         .await
@@ -446,9 +447,13 @@ impl Orchestrator {
         let mut ctx = PerceptionContext::from_scan_ctx(scan_ctx, cursor);
         let mut settings = self.settings.perception.clone();
         if guide_mode {
-            // Lighter scan while coaching — fewer HWND walks, no vision.
             settings.max_windows = settings.max_windows.min(4);
-            settings.vision_enabled = false;
+            match reason {
+                InvalidateReason::UserAction | InvalidateReason::StepBoundary => {}
+                _ => settings.vision_enabled = false,
+            }
+        } else if matches!(reason, InvalidateReason::StepBoundary) {
+            settings.max_windows = settings.max_windows.max(4);
         }
         ctx.settings = settings;
         let perceiver = self.perceiver.clone();
@@ -510,12 +515,14 @@ impl Orchestrator {
     }
 
     /// Instant copy when waiting; LLM only when we have a live anchor (PRD §8.3).
+    #[allow(clippy::too_many_arguments)]
     async fn instruction_for_step(
         &self,
         step: &GuideStep,
         frame: &ScreenFrame,
         intent: &Intent,
         template: &GuidanceTemplate,
+        scan_ctx: &ScanContext,
         input: &crate::input::InputSample,
         allow_llm: bool,
     ) -> String {
@@ -537,6 +544,11 @@ impl Orchestrator {
             if !limited.starts_with("guidance.") {
                 fallback = format!("{limited} {fallback}");
             }
+        } else if frame.quality == PerceptionQuality::VisionAssisted {
+            let note = i18n::t("guidance.perception_vision_assisted", self.lang, &[]);
+            if !note.starts_with("guidance.") {
+                fallback = format!("{note} {fallback}");
+            }
         }
 
         if !allow_llm || step.anchor_xy.is_none() || frame.elements.is_empty() {
@@ -544,7 +556,15 @@ impl Orchestrator {
         }
 
         let perception = &self.settings.perception;
-        let visible = frame.visible_summary(perception.prompt_max_elements);
+        let mut hints = scan_ctx.window_hints.clone();
+        if !intent.target.is_empty() {
+            hints.push(intent.target.clone());
+        }
+        let visible = frame.ranked_visible_summary(
+            perception.prompt_max_elements,
+            &hints,
+            input.cursor,
+        );
         let window_list = frame.window_list_for_prompt(perception.prompt_max_windows);
         let primary_title = frame.primary_window_title();
         let window_title = if primary_title.is_empty() {
@@ -572,6 +592,12 @@ impl Orchestrator {
             format!("Aviso de lectura: {warnings_summary}.")
         };
 
+        let element_source_note = if frame.has_vlm_elements() {
+            i18n::t("guidance.perception_vlm_note", self.lang, &[])
+        } else {
+            String::new()
+        };
+
         let prompt = prompts::render_instruction_step(InstructionPromptContext {
             goal: &intent.intent,
             step_index: step.index,
@@ -585,6 +611,7 @@ impl Orchestrator {
             target_on_screen: true,
             perception_quality: frame.quality.label(),
             warnings_line: &warnings_line,
+            element_source_note: &element_source_note,
         });
 
         let llm_fut = self
