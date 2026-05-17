@@ -1,4 +1,5 @@
 pub mod action_feedback;
+pub mod bootstrap;
 pub mod brief;
 pub mod decision;
 pub mod detector;

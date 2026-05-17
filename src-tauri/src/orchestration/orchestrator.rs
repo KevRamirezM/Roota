@@ -24,8 +24,8 @@ use crate::orchestration::guidance_copy::{
     self, accept_llm_instruction, canonical_instruction, click_hint, goal_summary,
     spatial_hint, target_element, visible_elements_for_prompt,
 };
-use crate::orchestration::brief::{BriefExtractor, TaskBrief};
-use crate::orchestration::intent::IntentRecognizer;
+use crate::orchestration::bootstrap::TaskBootstrapper;
+use crate::orchestration::brief::TaskBrief;
 use crate::orchestration::plan::{PlanSource, PlanValidator, TaskPlan};
 use crate::orchestration::planner::TaskPlanner;
 use crate::orchestration::replan::{ReplanEngine, ReplanReason};
@@ -86,8 +86,7 @@ pub struct Orchestrator {
     llm: Arc<dyn LlmClient>,
     perceiver: Arc<dyn Perceiver>,
     templates: Arc<TemplateRegistry>,
-    recognizer: IntentRecognizer,
-    brief_extractor: BriefExtractor,
+    bootstrapper: TaskBootstrapper,
     planner: TaskPlanner,
     replan_engine: ReplanEngine,
     decision: DecisionEngine,
@@ -107,21 +106,27 @@ impl Orchestrator {
         settings: Settings,
     ) -> Self {
         let lang = settings.ui_language;
-        let recognizer = IntentRecognizer::new(
+        let bootstrapper = TaskBootstrapper::new(
             llm.clone(),
             templates.clone(),
             lang,
-            settings.llm_intent_timeout_seconds,
+            settings.llm_timeout_seconds,
         );
-        let planner = TaskPlanner::new(llm.clone());
-        let brief_extractor = BriefExtractor::new(llm.clone());
-        let replan_engine = ReplanEngine::new(llm.clone());
+        let planner = TaskPlanner::new(
+            llm.clone(),
+            settings.llm_timeout_seconds,
+            settings.planner_prompt_max_elements,
+        );
+        let replan_engine = ReplanEngine::new(
+            llm.clone(),
+            settings.llm_timeout_seconds,
+            settings.planner_prompt_max_elements,
+        );
         Self {
             llm,
             perceiver,
             templates,
-            recognizer,
-            brief_extractor,
+            bootstrapper,
             planner,
             replan_engine,
             decision: DecisionEngine::new(lang),
@@ -158,7 +163,7 @@ impl Orchestrator {
     pub async fn run<S: EventSink + ?Sized>(self: Arc<Self>, utterance: String, sink: Arc<S>) {
         self.cancelled.store(false, Ordering::Relaxed);
         self.stuck_requested.store(false, Ordering::Relaxed);
-        let intent = self.recognizer.recognise(&utterance).await;
+        let (intent, task_brief) = self.bootstrapper.bootstrap(&utterance).await;
         let template_key = self.resolve_template_key(&intent);
         if template_key == "unknown" {
             sink.send(OrchestratorEvent::Error {
@@ -171,19 +176,6 @@ impl Orchestrator {
 
         let template = self.templates.get(&template_key).unwrap().clone();
         let is_dynamic = template_key == "windows_task";
-
-        let target_label = if !intent.target.is_empty() {
-            intent.target.clone()
-        } else if is_dynamic {
-            intent.raw_utterance.chars().take(72).collect()
-        } else {
-            i18n::t("intent.no_target", self.lang, &[])
-        };
-
-        let task_brief = self
-            .brief_extractor
-            .understand(&intent.raw_utterance, &target_label)
-            .await;
         tracing::info!(
             target: "roota.brief",
             summary = %task_brief.goal_summary,
@@ -810,7 +802,7 @@ impl Orchestrator {
         let has_anchor = step.anchor_xy.is_some();
         let fallback = canonical_instruction(self.lang, step, has_anchor);
 
-        if !allow_llm || !has_anchor || frame.elements.is_empty() {
+        if !self.settings.step_llm_enabled || !allow_llm || !has_anchor || frame.elements.is_empty() {
             return fallback;
         }
 

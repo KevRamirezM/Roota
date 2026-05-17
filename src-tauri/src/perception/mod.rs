@@ -13,6 +13,7 @@ pub mod error;
 pub mod frame;
 pub mod fusion;
 pub mod hybrid;
+pub mod labels;
 pub mod stub;
 pub mod uia;
 pub mod vision;
@@ -28,6 +29,7 @@ pub use frame::{
 };
 pub use fusion::FusionEngine;
 pub use hybrid::HybridPerceiver;
+pub use labels::{humanize_label, is_internal_ui_label, sanitize_plan_target};
 pub use stub::StubPerceiver;
 pub use uia::UiaPerceiver;
 

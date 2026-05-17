@@ -15,7 +15,7 @@ network**. Roota is a calm, patient companion, not an autopilot.
 | Desktop shell | Tauri 2 |
 | Backend | Rust (edition 2021, stable) |
 | Async runtime | tokio (multi-thread) |
-| HTTP / LLM | reqwest + Ollama `qwen3:1.7b` |
+| HTTP / LLM | reqwest + llama.cpp `llama-server` (qwen3 1.7b Q4); Ollama optional for vision |
 | Windows accessibility | `uiautomation` crate (read-only) |
 | Visual overlay | Frameless click-through Tauri webview window |
 | Frontend | React 18 + TypeScript + Vite |
@@ -29,10 +29,8 @@ network**. Roota is a calm, patient companion, not an autopilot.
 - **Rust toolchain** via [rustup](https://rustup.rs/) (`rustc` 1.77+, `cargo`).
 - **Microsoft Visual Studio 2022 Build Tools** with the *Desktop development with C++* workload (required by Tauri to link the Windows binary).
 - **Node.js 18+** and **npm** (or pnpm).
-- **Ollama** running locally with `qwen3:1.7b` pulled:
-  ```powershell
-  ollama pull qwen3:1.7b
-  ```
+- **llama.cpp** `llama-server` for text inference (see [Setup](#setup)).
+- **Optional:** **Ollama** + `moondream:1.8b` only if you enable `ROOTA_VISION_VLM=1`.
 - **WebView2 Runtime** (already shipped with Windows 10 21H2+ and Windows 11).
 
 ---
@@ -49,25 +47,42 @@ npm install
 # Sanity check Rust + Cargo
 cargo --version
 
-# Run the dev build (launches main window + hidden overlay)
+# Terminal 1 — local text LLM (required for non-stub guidance)
+.\scripts\start-llama.ps1
+
+# Terminal 2 — app
 npm run tauri:dev
 ```
+
+Download `llama-server.exe` into `bin/` from [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases), then run `.\scripts\download-model.ps1` for GGUF placement instructions.
 
 ### Optional environment overrides
 
 Create a `.env` next to `package.json` (gitignored) to override defaults:
 
 ```ini
-OLLAMA_HOST=http://localhost:11434
-LLM_MODEL=qwen3:1.7b
+LLM_BACKEND=llamacpp
+LLAMA_HOST=http://127.0.0.1:8080
+LLM_TIMEOUT_SECONDS=30
+LLM_HEALTH_TIMEOUT_SECONDS=2
+ROOTA_PLANNER_PROMPT_ELEMENTS=28
+ROOTA_STEP_LLM=0
 LLM_TEMPERATURE=0.3
 LLM_MAX_TOKENS=512
-LLM_TIMEOUT_SECONDS=30
 UI_LANGUAGE=es        # or en
 OVERLAY_OPACITY=0.85
 OVERLAY_FPS=30
 LOG_LEVEL=info
 SAFETY_STRICT=true
+
+# Rollback text LLM to Ollama:
+# LLM_BACKEND=ollama
+# OLLAMA_HOST=http://localhost:11434
+# LLM_MODEL=qwen3:1.7b
+
+# Optional vision VLM (requires Ollama):
+# ROOTA_VISION_VLM=1
+# ROOTA_VISION_MODEL=moondream:1.8b
 ```
 
 ---
@@ -146,7 +161,7 @@ npm run tauri:build
 
 ## Privacy & Safety Contract
 
-- All processing runs **100% on-device**. The only network call is to `localhost:11434` (Ollama).
+- All processing runs **100% on-device**. Text LLM calls go to `localhost:8080` (llama-server); optional vision uses `localhost:11434` (Ollama).
 - **Roota never automates input.** A `SafetyGuard` runs every emitted action through a closed allow-list (`Anchor`, `Highlight`, `Arrow`, `Speak`, `ShowText`, `Scan`). Anything else (`Click`, `TypeText`, `KeyPress`, `Drag`, `FileOp`, …) raises `UnsafeActionError`.
 - The Windows scanner only **reads** the active foreground window's UIA tree.
 - The codebase imports zero input-synthesis crates (no `enigo`, no `Win32::UI::Input::KeyboardAndMouse` callers).
@@ -156,8 +171,8 @@ npm run tauri:build
 
 ## Resilience
 
-- If Ollama is unreachable at boot, Roota uses a deterministic regex-based stub LLM so the UI still works.
-- If Ollama is up at boot but a single call fails (timeout, low memory, malformed JSON), `ResilientLlmClient` transparently falls back to the stub for the rest of the session — no crash, no broken demo.
+- If llama-server is unreachable at boot (2s health probe), Roota uses a deterministic regex-based stub LLM so the UI still works.
+- If the text backend is up but a single call fails (timeout, malformed JSON), `ResilientLlmClient` transparently falls back to the stub for the rest of the session — no crash, no broken demo.
 - The `WindowsScanner` returns an empty snapshot on any UIA error rather than panicking, and the orchestrator emits a friendly *"No encuentro {target}. ¿Lo ves en pantalla?"* error to the user.
 
 ---

@@ -8,7 +8,6 @@
 use crate::perception::frame::{
     ElementSource, PerceptionWarning, Rect, ScreenElement, WindowId, WindowSnapshot,
 };
-
 pub const DESKTOP_WINDOW_ID: WindowId = WindowId(u64::MAX - 1);
 pub const TASKBAR_WINDOW_ID: WindowId = WindowId(u64::MAX - 2);
 
@@ -72,6 +71,7 @@ mod windows_impl {
         DesktopCapture, ElementSource, PerceptionWarning, Rect, ScreenElement, WindowSnapshot,
         TASKBAR_CLASSES, TASKBAR_WINDOW_ID,
     };
+    use crate::perception::labels::humanize_label;
 
     use uiautomation::core::UIAutomation;
     use uiautomation::types::TreeScope;
@@ -121,9 +121,11 @@ mod windows_impl {
             let mut count = 0usize;
             for node in descendants {
                 if let (Ok(name), Ok(rect)) = (node.get_name(), node.get_bounding_rectangle()) {
-                    if name.trim().is_empty() {
+                    let automation_id =
+                        node.get_automation_id().ok().filter(|s| !s.is_empty());
+                    let Some(text) = humanize_label(&name, automation_id.as_deref()) else {
                         continue;
-                    }
+                    };
                     let width = rect.get_right() - rect.get_left();
                     let height = rect.get_bottom() - rect.get_top();
                     if width <= 2 || height <= 2 {
@@ -131,7 +133,7 @@ mod windows_impl {
                     }
                     out.elements.push(ScreenElement {
                         source: ElementSource::Uia,
-                        text: name,
+                        text,
                         bounds: Rect::new(rect.get_left(), rect.get_top(), width, height),
                         window_id: TASKBAR_WINDOW_ID,
                         kind: child
@@ -139,7 +141,7 @@ mod windows_impl {
                             .map(|ct| format!("{ct:?}"))
                             .unwrap_or_else(|_| "TaskbarItem".into()),
                         confidence: 1.0,
-                        automation_id: node.get_automation_id().ok().filter(|s| !s.is_empty()),
+                        automation_id,
                     });
                     count += 1;
                 }

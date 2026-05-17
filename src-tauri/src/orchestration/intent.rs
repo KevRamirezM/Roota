@@ -1,125 +1,79 @@
 use std::sync::Arc;
-use std::time::Duration;
 
-use crate::llm::stub::{
-    classify_utterance_detailed, is_known_intent, localize_target, StubLlmClient,
-};
-use crate::llm::LlmClient;
+use crate::llm::stub::localize_target;
+use crate::perception::sanitize_plan_target;
+use crate::orchestration::bootstrap::TaskBootstrapper;
 use crate::orchestration::state::Intent;
 use crate::orchestration::templates::TemplateRegistry;
-use crate::prompts;
 use crate::settings::Lang;
 
-pub struct IntentRecognizer {
-    llm: Arc<dyn LlmClient>,
-    templates: Arc<TemplateRegistry>,
+/// Map LLM / stub JSON to a validated [`Intent`].
+pub(crate) fn intent_from_json_value(
+    templates: &TemplateRegistry,
+    value: serde_json::Value,
+    raw_utterance: &str,
     lang: Lang,
-    intent_timeout: Duration,
+) -> Intent {
+    let intent_name = value
+        .get("intent")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .trim()
+        .to_lowercase();
+    let target = value
+        .get("target")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let target = sanitize_plan_target(&localize_target(target, lang));
+    let mut params = std::collections::BTreeMap::new();
+    if let Some(obj) = value.get("params").and_then(|v| v.as_object()) {
+        for (k, v) in obj {
+            let s = match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            params.insert(k.clone(), s);
+        }
+    }
+    let final_intent = if templates.get(&intent_name).is_some() {
+        intent_name
+    } else if intent_name == "unknown" || intent_name.is_empty() {
+        if raw_utterance.trim().is_empty() {
+            "unknown".to_string()
+        } else {
+            "windows_task".to_string()
+        }
+    } else {
+        "windows_task".to_string()
+    };
+    Intent {
+        intent: final_intent,
+        target,
+        params,
+        raw_utterance: raw_utterance.to_string(),
+    }
+}
+
+/// Thin wrapper kept for existing call sites and tests.
+pub struct IntentRecognizer {
+    bootstrapper: TaskBootstrapper,
 }
 
 impl IntentRecognizer {
     pub fn new(
-        llm: Arc<dyn LlmClient>,
+        llm: Arc<dyn crate::llm::LlmClient>,
         templates: Arc<TemplateRegistry>,
         lang: Lang,
-        intent_timeout_secs: f32,
+        timeout_secs: f32,
     ) -> Self {
         Self {
-            llm,
-            templates,
-            lang,
-            intent_timeout: Duration::from_secs_f32(intent_timeout_secs.max(3.0)),
+            bootstrapper: TaskBootstrapper::new(llm, templates, lang, timeout_secs),
         }
     }
 
     pub async fn recognise(&self, utterance: &str) -> Intent {
-        let trimmed = utterance.trim();
-        if trimmed.is_empty() {
-            return Intent::unknown(utterance);
-        }
-
-        // Fast path: only when a high-confidence regex rule matched (not generic fallback).
-        let (fast, rule_matched) = classify_utterance_detailed(trimmed);
-        if rule_matched && is_known_intent(&fast) {
-            tracing::info!(target: "roota.intent", "stub fast-path for {:?}", trimmed);
-            return self.value_to_intent(fast, utterance);
-        }
-
-        // Slow path: Ollama with a short cap so the UI is not blocked for 30s.
-        let allowed = self.templates.known_intents();
-        let prompt = prompts::render_intent_classifier(trimmed, &allowed);
-        let llm_fut = self
-            .llm
-            .complete_json(&prompt, Some(prompts::SYSTEM_PROMPT));
-        let value = match tokio::time::timeout(self.intent_timeout, llm_fut).await {
-            Ok(Ok(v)) => {
-                tracing::info!(target: "roota.intent", "LLM classified {:?}", trimmed);
-                v
-            }
-            Ok(Err(err)) => {
-                tracing::warn!(
-                    target: "roota.intent",
-                    "LLM JSON failed ({err}); using stub fallback"
-                );
-                StubLlmClient
-                    .complete_json(trimmed, None)
-                    .await
-                    .unwrap_or_else(|_| classify_utterance_detailed(trimmed).0)
-            }
-            Err(_) => {
-                tracing::warn!(
-                    target: "roota.intent",
-                    "LLM timed out after {:?}; using stub fallback",
-                    self.intent_timeout
-                );
-                classify_utterance_detailed(trimmed).0
-            }
-        };
-
-        self.value_to_intent(value, utterance)
-    }
-
-    fn value_to_intent(&self, value: serde_json::Value, raw_utterance: &str) -> Intent {
-        let intent_name = value
-            .get("intent")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .trim()
-            .to_lowercase();
-        let target = value
-            .get("target")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-        let target = localize_target(target, self.lang);
-        let mut params = std::collections::BTreeMap::new();
-        if let Some(obj) = value.get("params").and_then(|v| v.as_object()) {
-            for (k, v) in obj {
-                let s = match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                };
-                params.insert(k.clone(), s);
-            }
-        }
-        let final_intent = if self.templates.get(&intent_name).is_some() {
-            intent_name
-        } else if intent_name == "unknown" || intent_name.is_empty() {
-            if raw_utterance.trim().is_empty() {
-                "unknown".to_string()
-            } else {
-                "windows_task".to_string()
-            }
-        } else {
-            // Model invented an intent id — treat as universal desktop task.
-            "windows_task".to_string()
-        };
-        Intent {
-            intent: final_intent,
-            target,
-            params,
-            raw_utterance: raw_utterance.to_string(),
-        }
+        self.bootstrapper.bootstrap(utterance).await.0
     }
 }
 
@@ -151,7 +105,7 @@ mod tests {
     async fn known_intent_resolves() {
         let llm: Arc<dyn LlmClient> = Arc::new(CannedLlm);
         let templates = Arc::new(crate::orchestration::templates::default_registry());
-        let rec = IntentRecognizer::new(llm, templates, Lang::Es, 10.0);
+        let rec = IntentRecognizer::new(llm, templates, Lang::Es, 30.0);
         let intent = rec.recognise("Abre Descargas").await;
         assert_eq!(intent.intent, "open_folder");
         assert_eq!(intent.target, "Descargas");
@@ -159,6 +113,7 @@ mod tests {
 
     #[tokio::test]
     async fn fast_path_skips_slow_llm() {
+        use std::time::Duration;
         struct SlowLlm;
         #[async_trait::async_trait]
         impl LlmClient for SlowLlm {
@@ -207,7 +162,7 @@ mod tests {
     async fn unregistered_intent_becomes_windows_task() {
         let llm: Arc<dyn LlmClient> = Arc::new(BogusLlm);
         let templates = Arc::new(crate::orchestration::templates::default_registry());
-        let rec = IntentRecognizer::new(llm, templates, Lang::Es, 10.0);
+        let rec = IntentRecognizer::new(llm, templates, Lang::Es, 30.0);
         let intent = rec.recognise("haz café").await;
         assert_eq!(intent.intent, "windows_task");
     }

@@ -1,5 +1,5 @@
 //! LLM task planner — turns any Windows utterance + live screen into step blueprints.
-//! Uses the same text model as intent classification (e.g. qwen3:1.7b); vision stays in perception.
+//! Uses the same text model as intent classification (e.g. qwen2.5:3b); vision stays in perception.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,14 +13,12 @@ use crate::orchestration::plan::{PlanSource, TaskPlan};
 use crate::orchestration::recipes::RecipeRegistry;
 use crate::orchestration::state::ActionVerb;
 use crate::orchestration::templates::{GuidanceTemplate, StepBlueprint};
-use crate::perception::ScreenFrame;
+use crate::perception::{sanitize_plan_target, ScreenFrame};
+use crate::perception::labels::is_internal_ui_label;
 use crate::prompts;
 use crate::settings::PerceptionSettings;
 
-const PLANNER_TIMEOUT_SECS: f32 = 28.0;
 const MAX_PLANNED_STEPS: usize = 6;
-/// Slightly larger cap for planning so the model sees menus the guide loop may omit.
-const PLANNER_PROMPT_ELEMENTS: usize = 60;
 
 #[derive(Debug, Deserialize)]
 struct PlannedStepJson {
@@ -37,11 +35,17 @@ struct PlanJson {
 
 pub struct TaskPlanner {
     llm: Arc<dyn LlmClient>,
+    inference_timeout_secs: f32,
+    prompt_element_cap: usize,
 }
 
 impl TaskPlanner {
-    pub fn new(llm: Arc<dyn LlmClient>) -> Self {
-        Self { llm }
+    pub fn new(llm: Arc<dyn LlmClient>, inference_timeout_secs: f32, prompt_element_cap: usize) -> Self {
+        Self {
+            llm,
+            inference_timeout_secs,
+            prompt_element_cap: prompt_element_cap.max(8),
+        }
     }
 
     /// Build a full guidance template from what is on screen right now.
@@ -77,9 +81,7 @@ impl TaskPlanner {
         hints.extend(brief.app_hints.clone());
         hints.extend(brief.object_hints.clone());
 
-        let element_limit = perception
-            .prompt_max_elements
-            .max(PLANNER_PROMPT_ELEMENTS);
+        let element_limit = self.prompt_element_cap;
         let visible = frame.ranked_visible_summary_for_target(
             element_limit,
             &hints,
@@ -101,19 +103,34 @@ impl TaskPlanner {
             visible_elements: &visible,
         });
 
-        let timeout = Duration::from_secs_f32(PLANNER_TIMEOUT_SECS);
+        let timeout = Duration::from_secs_f32(self.inference_timeout_secs);
         let llm_fut = self
             .llm
             .complete_json(&prompt, Some(prompts::SYSTEM_PROMPT));
         let template = match tokio::time::timeout(timeout, llm_fut).await {
-            Ok(Ok(v)) => parse_plan_json(v, &goal_target)
-                .unwrap_or_else(|| heuristic_plan(&brief.raw_utterance, &goal_target, Some(frame))),
+            Ok(Ok(v)) => parse_plan_json(v, &goal_target).unwrap_or_else(|| {
+                tracing::warn!(
+                    target: "roota.planner",
+                    reason = "stub_fallback",
+                    cause = "json_parse_failed"
+                );
+                heuristic_plan(&brief.raw_utterance, &goal_target, Some(frame))
+            }),
             Ok(Err(err)) => {
-                tracing::warn!(target: "roota.planner", "LLM plan failed: {err}");
+                tracing::warn!(
+                    target: "roota.planner",
+                    reason = "stub_fallback",
+                    cause = "llm_error",
+                    error = %err
+                );
                 heuristic_plan(&brief.raw_utterance, &goal_target, Some(frame))
             }
             Err(_) => {
-                tracing::warn!(target: "roota.planner", "LLM plan timed out");
+                tracing::warn!(
+                    target: "roota.planner",
+                    reason = "stub_fallback",
+                    cause = "timeout"
+                );
                 heuristic_plan(&brief.raw_utterance, &goal_target, Some(frame))
             }
         };
@@ -139,14 +156,14 @@ pub fn parse_plan_json(value: serde_json::Value, goal_target: &str) -> Option<Gu
         .steps
         .into_iter()
         .filter_map(|s| {
-            let target = s.target.trim();
+            let target = sanitize_plan_target(&s.target);
             if target.is_empty() {
                 return None;
             }
             let action = parse_action(&s.action);
             Some(StepBlueprint {
                 action,
-                target_query: target.into(),
+                target_query: target,
                 instruction_key: instruction_key_for(action),
                 fallback_window: None,
             })
@@ -209,7 +226,7 @@ fn pick_visible_label(frame: &ScreenFrame, keywords: &[&str]) -> Option<String> 
     let mut best: Option<(usize, String)> = None;
     for el in &frame.elements {
         let text = el.text.trim();
-        if text.is_empty() || text.chars().count() > 48 {
+        if text.is_empty() || text.chars().count() > 48 || is_internal_ui_label(text) {
             continue;
         }
         let lower = text.to_lowercase();
@@ -315,10 +332,24 @@ pub fn heuristic_plan(
         }
     }
 
-    let target = if !goal.is_empty() {
-        goal.to_string()
+    let target = sanitize_plan_target(
+        if !goal.is_empty() {
+            goal
+        } else {
+            utterance.trim()
+        },
+    );
+    let target = if target.is_empty() {
+        if lower.contains("configuración")
+            || lower.contains("configuracion")
+            || lower.contains("settings")
+        {
+            "Inicio".to_string()
+        } else {
+            utterance.trim().chars().take(48).collect::<String>()
+        }
     } else {
-        utterance.trim().chars().take(48).collect::<String>()
+        target
     };
     let action = if lower.contains("doble") {
         ActionVerb::DoubleClick
@@ -359,6 +390,16 @@ mod tests {
         assert_eq!(t.steps.len(), 2);
         assert_eq!(t.steps[0].target_query, "Inicio");
         assert_eq!(t.steps[1].action, ActionVerb::Click);
+    }
+
+    #[test]
+    fn parse_plan_sanitizes_session_start() {
+        let v = serde_json::json!({
+            "goal_summary": "abrir configuración",
+            "steps": [{"action": "locate", "target": "session-start"}]
+        });
+        let t = parse_plan_json(v, "configuración").unwrap();
+        assert_eq!(t.steps[0].target_query, "Inicio");
     }
 
     #[test]

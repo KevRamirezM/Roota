@@ -273,14 +273,18 @@ mod windows_impl {
     }
 
     fn element_label(node: &UIElement) -> String {
+        let automation_id = node.get_automation_id().ok().filter(|s| !s.is_empty());
         let name = node.get_name().unwrap_or_default();
-        if !name.trim().is_empty() {
-            return name;
+        if let Some(label) = crate::perception::labels::humanize_label(&name, automation_id.as_deref())
+        {
+            return label;
         }
-        node.get_help_text()
+        let help = node
+            .get_help_text()
             .ok()
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        crate::perception::labels::humanize_label(&help, automation_id.as_deref()).unwrap_or(help)
     }
 }
 

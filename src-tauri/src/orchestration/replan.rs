@@ -37,9 +37,13 @@ pub struct ReplanEngine {
 }
 
 impl ReplanEngine {
-    pub fn new(llm: Arc<dyn LlmClient>) -> Self {
+    pub fn new(
+        llm: Arc<dyn LlmClient>,
+        inference_timeout_secs: f32,
+        prompt_element_cap: usize,
+    ) -> Self {
         Self {
-            planner: TaskPlanner::new(llm),
+            planner: TaskPlanner::new(llm, inference_timeout_secs, prompt_element_cap),
         }
     }
 

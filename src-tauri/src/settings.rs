@@ -5,14 +5,37 @@ use std::env;
 
 use crate::perception::context::PerceptionMode;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LlmBackend {
+    LlamaCpp,
+    Ollama,
+}
+
+impl LlmBackend {
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "ollama" => Self::Ollama,
+            _ => Self::LlamaCpp,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Settings {
+    pub llm_backend: LlmBackend,
+    pub llama_host: String,
     pub ollama_host: String,
     pub llm_model: String,
     pub llm_temperature: f32,
     pub llm_max_tokens: u32,
     pub llm_timeout_seconds: f32,
-    /// Max wait for intent classification before stub fallback (keeps UI responsive).
+    /// Per health-probe HTTP call at startup (not inference).
+    pub llm_health_timeout_seconds: f32,
+    /// Max ranked element lines in the task planner prompt.
+    pub planner_prompt_max_elements: usize,
+    /// When true, per-step instruction copy may call the text LLM.
+    pub step_llm_enabled: bool,
+    /// Deprecated — bootstrap uses `llm_timeout_seconds`. Kept for Ollama rollback.
     pub llm_intent_timeout_seconds: f32,
     pub ui_language: Lang,
     pub overlay_opacity: f32,
@@ -146,11 +169,16 @@ impl Lang {
 impl Settings {
     pub fn from_env() -> Self {
         Settings {
+            llm_backend: LlmBackend::parse(&env_or("LLM_BACKEND", "llamacpp")),
+            llama_host: env_or("LLAMA_HOST", "http://127.0.0.1:8080"),
             ollama_host: env_or("OLLAMA_HOST", "http://localhost:11434"),
             llm_model: env_or("LLM_MODEL", "qwen3:1.7b"),
             llm_temperature: env_parse("LLM_TEMPERATURE", 0.3),
             llm_max_tokens: env_parse("LLM_MAX_TOKENS", 512),
             llm_timeout_seconds: env_parse("LLM_TIMEOUT_SECONDS", 30.0),
+            llm_health_timeout_seconds: env_parse("LLM_HEALTH_TIMEOUT_SECONDS", 2.0),
+            planner_prompt_max_elements: env_parse("ROOTA_PLANNER_PROMPT_ELEMENTS", 28),
+            step_llm_enabled: env_parse_bool("ROOTA_STEP_LLM", false),
             llm_intent_timeout_seconds: env_parse("LLM_INTENT_TIMEOUT_SECONDS", 10.0),
             ui_language: Lang::parse(&env_or("UI_LANGUAGE", "es")),
             overlay_opacity: env_parse("OVERLAY_OPACITY", 0.85),
@@ -192,8 +220,23 @@ mod tests {
     fn defaults_match_python_env_example() {
         let s = Settings::from_env();
         assert!(s.ollama_host.starts_with("http"));
+        assert!(s.llama_host.starts_with("http"));
         assert!(s.llm_model.contains("qwen"));
         assert!((0.0..=1.0).contains(&s.overlay_opacity));
+    }
+
+    #[test]
+    fn llm_backend_defaults_to_llamacpp() {
+        std::env::remove_var("LLM_BACKEND");
+        let s = Settings::from_env();
+        assert_eq!(s.llm_backend, LlmBackend::LlamaCpp);
+    }
+
+    #[test]
+    fn planner_prompt_cap_defaults_to_28() {
+        std::env::remove_var("ROOTA_PLANNER_PROMPT_ELEMENTS");
+        let s = Settings::from_env();
+        assert_eq!(s.planner_prompt_max_elements, 28);
     }
 
     #[test]

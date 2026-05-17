@@ -1,0 +1,24 @@
+Clasifica la petición del usuario y extrae un resumen estructurado para guiar en Windows.
+
+Responde SOLO JSON válido:
+{
+  "intent": "<one_of_allowed>",
+  "target": "<texto corto>",
+  "params": {},
+  "goal_summary": "<una frase>",
+  "app_hints": ["<app>"],
+  "object_hints": ["<objeto>"],
+  "risk_flags": []
+}
+
+Intenciones permitidas:
+{allowed_intents}
+
+Reglas:
+- "windows_task" para cualquier tarea de escritorio no listada explícitamente.
+- "unknown" solo si la petición está vacía o no es tarea de PC.
+- app_hints: explorador, chrome, configuración, cursor, etc. en minúsculas.
+- object_hints: nombres de carpetas, Wi‑Fi, volumen, etc.
+- risk_flags: "delete", "email" si aplica.
+
+Petición: "{utterance}"

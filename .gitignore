@@ -49,6 +49,9 @@ venv/
 .coverage
 htmlcov/
 
+# llama.cpp binary (download from releases)
+bin/llama-server.exe
+
 # Misc
 *.gguf
 *.bin

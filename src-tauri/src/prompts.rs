@@ -7,8 +7,10 @@ pub const TASK_PLANNER: &str = include_str!("../prompts/task_planner.txt");
 pub const TASK_BRIEF: &str = include_str!("../prompts/task_brief.txt");
 pub const WINDOWS_DESKTOP_GUIDE: &str = include_str!("../prompts/windows_desktop_guide.txt");
 pub const WINDOWS_DESKTOP_HINTS: &str = include_str!("../prompts/windows_desktop_hints.txt");
+pub const UNIFIED_BOOTSTRAP: &str = include_str!("../prompts/unified_bootstrap.txt");
 
-pub fn render_intent_classifier(utterance: &str, allowed_intents: &[String]) -> String {
+/// Bullet list of allowed intent ids for classifier / bootstrap prompts.
+pub fn format_allowed_intents(allowed_intents: &[String]) -> String {
     let mut lines: Vec<String> = allowed_intents
         .iter()
         .map(|i| format!("- {i}"))
@@ -19,8 +21,18 @@ pub fn render_intent_classifier(utterance: &str, allowed_intents: &[String]) -> 
     if !lines.iter().any(|l| l.contains("unknown")) {
         lines.push("- unknown".into());
     }
+    lines.join("\n")
+}
+
+pub fn render_intent_classifier(utterance: &str, allowed_intents: &[String]) -> String {
     INTENT_CLASSIFIER
-        .replace("{allowed_intents}", &lines.join("\n"))
+        .replace("{allowed_intents}", &format_allowed_intents(allowed_intents))
+        .replace("{utterance}", utterance)
+}
+
+pub fn render_unified_bootstrap(utterance: &str, allowed_intents: &[String]) -> String {
+    UNIFIED_BOOTSTRAP
+        .replace("{allowed_intents}", &format_allowed_intents(allowed_intents))
         .replace("{utterance}", utterance)
 }
 
@@ -107,6 +119,14 @@ mod tests {
         assert!(!out.contains("{windows_guide}"));
         assert!(out.contains("Win+E"));
         assert!(out.len() > WINDOWS_DESKTOP_GUIDE.len() / 2);
+    }
+
+    #[test]
+    fn unified_bootstrap_has_no_placeholders() {
+        let out = render_unified_bootstrap("Abre Chrome", &["open_folder".into()]);
+        assert!(!out.contains("{utterance}"));
+        assert!(!out.contains("{allowed_intents}"));
+        assert!(out.contains("Abre Chrome"));
     }
 
     #[test]

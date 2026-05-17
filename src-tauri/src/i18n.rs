@@ -218,6 +218,11 @@ const ES: &[(&str, &str)] = &[
         "ollama.unavailable",
         "El motor local no responde. Estoy usando respuestas guardadas.",
     ),
+    (
+        "llama.unavailable",
+        "No se encontró el servidor local de IA. Ejecuta scripts/start-llama.ps1",
+    ),
+    ("llm.backend", "Motor de IA: {name}"),
     ("confirm.open_folder", "abrir la carpeta {target}"),
     ("confirm.move_file", "mover el archivo {target}"),
     ("confirm.delete_file", "borrar el archivo {target}"),
@@ -413,6 +418,11 @@ const EN: &[(&str, &str)] = &[
         "ollama.unavailable",
         "The local engine isn't responding. Using saved replies.",
     ),
+    (
+        "llama.unavailable",
+        "Local AI server not found. Run scripts/start-llama.ps1",
+    ),
+    ("llm.backend", "AI engine: {name}"),
     ("confirm.open_folder", "open the {target} folder"),
     ("confirm.move_file", "move the file {target}"),
     ("confirm.delete_file", "delete the file {target}"),

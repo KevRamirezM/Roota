@@ -11,6 +11,8 @@ use crate::settings::Settings;
 /// Keep Moondream loaded between perception ticks (Ollama `keep_alive`).
 const VISION_KEEP_ALIVE: &str = "15m";
 
+const HEALTH_PROBE_MAX_SECS: f32 = 2.0;
+
 #[derive(Debug, Clone)]
 pub struct OllamaClient {
     base_url: String,
@@ -18,6 +20,7 @@ pub struct OllamaClient {
     temperature: f32,
     max_tokens: u32,
     timeout_secs: f32,
+    health_timeout_secs: f32,
     http: reqwest::Client,
     blocking: reqwest::blocking::Client,
 }
@@ -60,12 +63,17 @@ impl OllamaClient {
             .timeout(timeout)
             .build()
             .unwrap_or_default();
+        let health_timeout_secs = settings
+            .llm_health_timeout_seconds
+            .min(HEALTH_PROBE_MAX_SECS)
+            .max(0.5);
         OllamaClient {
             base_url: settings.ollama_host.trim_end_matches('/').to_string(),
             model,
             temperature,
             max_tokens,
             timeout_secs,
+            health_timeout_secs,
             http,
             blocking,
         }
@@ -224,14 +232,21 @@ impl OllamaClient {
     /// Sync reachability probe — safe to call from Tauri `.setup()` (no `block_on`).
     pub fn health_check_blocking(&self) -> bool {
         let url = format!("{}/api/tags", self.base_url);
-        match self
-            .blocking
-            .get(&url)
-            .timeout(Duration::from_secs(3))
-            .send()
-        {
-            Ok(resp) => resp.status().is_success(),
-            Err(_) => false,
+        let probe = Duration::from_secs_f32(self.health_timeout_secs);
+        match self.blocking.get(&url).timeout(probe).send() {
+            Ok(resp) if resp.status().is_success() => true,
+            Ok(resp) => {
+                tracing::debug!(
+                    target: "roota.llm",
+                    status = %resp.status(),
+                    "Ollama health probe non-2xx"
+                );
+                false
+            }
+            Err(e) => {
+                tracing::debug!(target: "roota.llm", error = %e, "Ollama health probe failed");
+                false
+            }
         }
     }
 
